@@ -67,7 +67,7 @@ Learn to hunt threats in Microsoft 365 email using KQL.
 
 Understanding how tables relate is critical for effective hunting:
 
-<div style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25; white-space: pre;">
+<pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
 ┌─────────────────┐     NetworkMessageId      ┌─────────────────────┐
 │   EmailEvents   │◄──────────────────────────│ EmailAttachmentInfo │
 │                 │                           └─────────────────────┘
@@ -84,7 +84,7 @@ Understanding how tables relate is critical for effective hunting:
 │ IdentityLogonEvents │◄─────────────────────────────────────────────│  CloudAppEvents  │
 │ (Sign-ins)          │                                              │ (User actions)   │
 └─────────────────────┘                                              └──────────────────┘
-</div>
+</pre>
 
 
 
