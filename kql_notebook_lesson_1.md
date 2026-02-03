@@ -353,6 +353,19 @@ search "facebook"
 search in (IdentityLogonEvents, CloudAppEvents) "failed"
 ```
 
+```kql
+search in (EmailEvents, CloudAppEvents)
+ "facebook"
+| where Timestamp > ago(24h)
+```
+
+```kql
+search in (CloudAppEvents)
+ "groupon"
+| where Timestamp > ago(1d)
+| take 100
+```
+
 [back to top](#kql-for-email-security-beginner-series)
 
 ---
@@ -1210,28 +1223,44 @@ After: Top 3 by Count
 **Examples**
 
 ```kql
-// Top domains - distinct list
 EmailEvents
-| distinct SenderFromDomain
-| take 5
-```
-
-```kql
-// Active apps - distinct list
-IdentityLogonEvents
 | where Timestamp > ago(7d)
-| distinct Application
-| take 10
+| summarize 
+    EmailCount = count() 
+    by SenderFromDomain
+| top 20 by EmailCount desc
 ```
 
 ```kql
-// Users with delete actions
+EmailEvents
+| where Timestamp > ago(7d)
+| where ThreatTypes has_any ("Phish", "Malware")
+| summarize
+    ThreatEmailCount = count(), 
+    DistinctRecipients = dcount(RecipientEmailAddress)
+    by SenderFromDomain
+| top 10 by ThreatEmailCount desc
+```
+
+```kql
+EmailAttachmentInfo
+| where Timestamp > ago(7d)
+| summarize
+    AttachmentCount = count(), 
+    DistinctMessages = dcount(NetworkMessageId)
+    by FileType
+| top 10 by AttachmentCount desc
+```
+
+```kql
 CloudAppEvents
-| where Timestamp >= ago(30d)
-| where ActionType == "SoftDelete"
-| extend UserId = tostring(RawEventData.UserId)
-| project UserId, Timestamp
-| distinct UserId
+| where Timestamp > ago(7d)
+| where ActionType == "FileUploaded"
+| summarize
+    UploadCount = count(), 
+    DistinctUsers = dcount(AccountObjectId)
+    by Application
+| top 10 by UploadCount desc
 ```
 
 [back to top](#kql-for-email-security-beginner-series)
