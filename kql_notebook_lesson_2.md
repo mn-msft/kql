@@ -2250,15 +2250,6 @@ Access:
 **Examples**
 
 
-**Review MS Bookings Audits**
-
-
-```kql
-CloudAppEvents
-| search "Bookings"
-```
-
-
 ```kql
 CloudAppEvents
 | extend Data = parse_json(RawEventData)
