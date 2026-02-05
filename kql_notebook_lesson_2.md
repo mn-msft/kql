@@ -2040,8 +2040,8 @@ externaldata(Domain:string)
 ```kql
 let imid =
     externaldata (Message_ID: string) [
-    @"https://bwdemoblob.blob.core.windows.net/curated/EmailEvents_20260120_160736.csv"
-    h@"?sp=r&st=2026-01-28T15:24:14Z&se=2026-01-28T23:39:14Z&spr=https&sv=2024-11-04&sr=b&sig=MtZB2lq1cSRNoZcCkMRA0RH4FbKTDV2vKpwEsT6Ufv4%3D"
+    @"https://contoso.blob.core.windows.net/curated/EmailEvents_20260120_160736.csv"
+    h@"?sp=r&st=2026-01-28T1"
     ]
     with (format='csv', ignorefirstrecord=true)
     | project Message_ID;
@@ -2052,14 +2052,14 @@ imid;
 ```kql
 let imid =
     externaldata (Message_ID:string) [
-        @"https://bwdemoblob.blob.core.windows.net/curated/EmailEvents_20260120_160736.csv"
-        h@"?sp=r&st=2026-01-28T15:24:14Z&se=2026-01-28T23:39:14Z&spr=https&sv=2024-11-04&sr=b&sig=MtZB2lq1cSRNoZcCkMRA0RH4FbKTDV2vKpwEsT6Ufv4%3D"
+        @"https://contoso.blob.core.windows.net/curated/EmailEvents_20260120_160736.csv"
+        h@"?sp=r&st=2026-01-"
     ]
     with (format='csv', ignorefirstrecord=true)
     | project Message_ID;
 EmailEvents
 | where Timestamp >= ago(30d)
-| where RecipientEmailAddress == "lily.reed@banwinner.com"
+| where RecipientEmailAddress == "user@contoso.com"
 | where InternetMessageId has_any (imid)
 ```
 
