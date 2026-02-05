@@ -531,9 +531,6 @@ EmailPostDeliveryEvents                              // Query post-delivery even
 ```
 
 
-### Ibrahim's scenario
-
-
 ```kql
 EmailEvents
 | summarize RecipientCount = count() 
