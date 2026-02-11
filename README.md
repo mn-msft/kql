@@ -1,1 +1,1 @@
-Course files for KQL series
+**Course files for KQL series**
