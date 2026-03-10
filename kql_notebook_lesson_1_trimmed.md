@@ -21,9 +21,6 @@ Learn to hunt threats in Microsoft 365 email using Kusto Query Languag (KQL)
 <a id="toc" name="toc"></a>
 # Table of Contents
 
-- [KQL for Email Security — Beginner Series](#kql-for-email-security--beginner-series)
-    - [Sample Tables](#sample-tables)
-- [Table of Contents](#table-of-contents)
   - [Table Relationships Quick Reference](#table-relationships-quick-reference)
   - [getschema](#getschema)
   - [print](#print)
