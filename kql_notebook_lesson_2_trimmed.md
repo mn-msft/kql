@@ -28,27 +28,24 @@ Building on beginner concepts with aggregations, joins, and variables.
 5. [make_list()](#make_list)
 6. [make_bag()](#make_bag)
 7. [dcount()](#dcount)
-8. [arg_max()](#arg_max)
-9. [arg_min()](#arg_min)
-10. [bin()](#bin)
-11. [render](#render)
-12. [countif()](#countif)
-13. [sumif() / dcountif()](#sumif-dcountif)
-14. [datetime_diff()](#datetime_diff)
-15. [let](#let)
-16. [pack_array()](#pack_array)
-17. [pack()](#pack)
-18. [has_any / has_all](#has_any-has_all)
-19. [join](#join)
-20. [union](#union)
-21. [externaldata](#externaldata)
-22. [iif()](#iif)
-23. [case()](#case)
-24. [parse_json()](#parse_json)
-25. [isempty() / isnull()](#isempty-isnull)
-26. [Live Scenario: join](#live-scenario-join)
-27. [Live Scenario: bin() and render](#live-scenario-bin-render)
-28. [Common Gotchas & Tips](#common-gotchas-tips)
+8. [arg_max() / arg_min()](#arg_max-arg_min)
+9. [bin()](#bin)
+10. [render](#render)
+11. [countif() / sumif() / dcountif()](#countif)
+12. [datetime_diff()](#datetime_diff)
+13. [let](#let)
+14. [pack_array() / pack()](#pack_array-pack)
+15. [has_any / has_all](#has_any-has_all)
+16. [join](#join)
+17. [union](#union)
+18. [externaldata](#externaldata)
+19. [iif()](#iif)
+20. [case()](#case)
+21. [parse_json()](#parse_json)
+22. [isempty() / isnull()](#isempty-isnull)
+23. [Live Scenario: join](#live-scenario-join)
+24. [Live Scenario: bin() and render](#live-scenario-bin-render)
+25. [Common Gotchas & Tips](#common-gotchas-tips)
 ---
 
 <a id="summarize" name="summarize"></a>
@@ -169,16 +166,6 @@ EmailAttachmentInfo                             // Query email attachment metada
     by FileExtension                            // One row per file type
 | sort by AvgSize                               // Sort by average attachment size
 | take 10                                       // Return top 10 file types
-```
-
-```kusto
-// avg() - average file size by type
-// Query email attachment metadata
-EmailAttachmentInfo
-| where Timestamp > ago(7d)          // Limit to attachments from the last 7 days
-| summarize AvgSize = avg(FileSize),MinSize = min(FileSize),MaxSize = max(FileSize) by FileExtension
-| sort by AvgSize desc               // Sort by average attachment size
-| take 10                            // Return top 10 file types
 ```
 
 ```kusto
@@ -814,13 +801,13 @@ EmailUrlInfo
 
 ---
 
-<a id="arg_max" name="arg_max"></a>
-## arg_max()
+<a id="arg_max-arg_min" name="arg_max-arg_min"></a>
+## arg_max() / arg_min()
 
-- Returns the row with the maximum value of a column.
-- Perfect for getting the "latest" or "most recent" record per group.
+- `arg_max()` returns the row with the maximum value of a column — use for the latest or most recent record per group.
+- `arg_min()` returns the row with the minimum value — use for the earliest or first record per group.
 
-**How `arg_max()` works**
+**How they work**
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
 Before: Multiple sign-ins per user
@@ -913,16 +900,6 @@ UrlClickEvents
     by AccountUpn
 ```
 
-[back to top](#kql-intermediate-series)
-
----
-
-<a id="arg_min" name="arg_min"></a>
-## arg_min()
-
-- Returns the row with the minimum value of a column.
-- Perfect for getting the "earliest" or "first" record per group.
-
 **How `arg_min()` works**
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
@@ -950,6 +927,8 @@ After: First sign-in per user
 </pre>
 
 **Examples**
+
+**`arg_min()` — Examples**
 
 ```kusto
 IdentityLogonEvents                  // Query identity logon events
@@ -1141,14 +1120,19 @@ UrlClickEvents
 ---
 
 <a id="countif" name="countif"></a>
-## countif()
+## countif() / sumif() / dcountif()
 
-- Conditional count inside summarize.
-- Counts only rows where the condition is true.
+- Conditional aggregations inside `summarize`.
+- `countif()` - count only where condition is true.
+- `sumif()` - Sum values only where condition is true.
+- `dcountif()` - Count distinct values only where condition is true.
+- Allows multiple filtered aggregations in one query.
 
-**How `countif()` works**
+**How conditional aggregations work**
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
+Example:
+
 Before: Email delivery data
 ┌─────────────┬──────────────────┐
 │ ActionType  │ DeliveryLocation │
@@ -1240,36 +1224,6 @@ EmailPostDeliveryEvents
     ZapActions    = countif(ActionType has "ZAP"),
     ManualActions = countif(ActionType has "Manual")
 ```
-
-[back to top](#kql-intermediate-series)
-
----
-
-<a id="sumif-dcountif" name="sumif-dcountif"></a>
-## sumif() / dcountif()
-
-- Conditional aggregations inside `summarize`.
-- `sumif()` - Sum values only where condition is true.
-- `dcountif()` - Count distinct values only where condition is true.
-- Allows multiple filtered aggregations in one query.
-
-**How conditional aggregations work**
-
-<pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
-summarize
-    countif(condition),           // Count rows where true
-    sumif(column, condition),     // Sum column where true
-    dcountif(column, condition)   // Distinct count where true
-
-Example:
-| summarize
-    TotalEmails = count(),
-    InboundCount = countif(Direction == "Inbound"),
-    InboundSize = sumif(Size, Direction == "Inbound"),
-    UniqueInboundSenders = dcountif(Sender, Direction == "Inbound")
-</pre>
-
-**Examples**
 
 ```kusto
 // Compare inbound vs outbound email sizes
@@ -1543,12 +1497,6 @@ Orders
 ```
 
 ```kusto
-EmailEvents
-| where Timestamp >= ago(1d)
-| distinct Subject
-```
-
-```kusto
 // let — reusable timeframe and severity for alert hunting
 let timeframe = 7d;
 let minSeverity = "High";
@@ -1587,10 +1535,27 @@ EntraIdSignInEvents
 
 ---
 
-<a id="pack_array" name="pack_array"></a>
-## pack_array()
+<a id="pack_array-pack" name="pack_array-pack"></a>
+## pack_array() / pack()
 
-- Combines multiple columns into an array or JSON object.
+- `pack_array()` combines columns into an **ordered array** — fields referenced by index.
+- `pack()` creates a **named JSON object** — fields referenced by key name.
+
+**Examples**
+
+**pack_array() vs pack()**
+
+<pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
+pack_array(Sender, Recipient, Subject)
+    → ["alice@contoso.com", "bob@fabrikam.com", "Invoice"]
+
+pack("Sender", Sender, "Recipient", Recipient, "Subject", Subject)
+    → {
+         "Sender": "alice@contoso.com",
+         "Recipient": "bob@fabrikam.com",
+         "Subject": "Invoice"
+       }
+</pre>
 
 **Examples**
 
@@ -1680,31 +1645,7 @@ EntraIdSignInEvents
 | take 10
 ```
 
-[back to top](#kql-intermediate-series)
-
----
-
-<a id="pack" name="pack"></a>
-## pack()
-
-- Creates a JSON object with named key-value pairs.
-- Use when you need labeled fields instead of an ordered array.
-
-**pack_array() vs pack()**
-
-<pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
-pack_array(Sender, Recipient, Subject)
-    → ["alice@contoso.com", "bob@fabrikam.com", "Invoice"]
-
-pack("Sender", Sender, "Recipient", Recipient, "Subject", Subject)
-    → {
-         "Sender": "alice@contoso.com",
-         "Recipient": "bob@fabrikam.com",
-         "Subject": "Invoice"
-       }
-</pre>
-
-**Examples**
+**`pack()` — Examples**
 
 ```kusto
 // Create a JSON object with email details
@@ -3201,5 +3142,3 @@ EmailEvents
 - Use `isnotempty()` to filter out both empty and null
 
 [back to top](#kql-intermediate-series)
-
----
