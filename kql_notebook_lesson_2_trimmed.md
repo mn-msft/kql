@@ -928,8 +928,6 @@ After: First sign-in per user
 
 **Examples**
 
-**`arg_min()` — Examples**
-
 ```kusto
 IdentityLogonEvents                  // Query identity logon events
 | summarize                          // Aggregate by account UPN
