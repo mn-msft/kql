@@ -805,9 +805,9 @@ EmailUrlInfo
 ## arg_max() / arg_min()
 
 - `arg_max()` returns the row with the maximum value of a column — use for the latest or most recent record per group.
-- `arg_min()` returns the row with the minimum value — use for the earliest or first record per group.
+- `arg_min()` returns the row with the minimum value of a column — use for the earliest or first record per group.
 
-**How they work**
+**How `arg_max()` works**
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
 Before: Multiple sign-ins per user
