@@ -2940,6 +2940,31 @@ Access:
         Data.nested.a = 1  
         Data["nested"]["b"] = 2
 
+### Parsing Workflow
+
+1) identify the dynamic column
+2) `parse_json()` it
+3) inspect keys if needed
+4) flatten fields with extend
+5) project the clean output
+
+**Dynamic Column template**
+```kusto
+SomeTable
+| where Timestamp >= ago(7d)
+| where isnotempty(SomeDynamicColumn)
+| extend Parsed = parse_json(SomeDynamicColumn)
+| extend
+    Field1 = tostring(Parsed.Field1),
+    Field2 = tostring(Parsed.Field2),
+    Field3 = todatetime(Parsed.Field3)
+| project 
+    Timestamp, 
+    Field1, 
+    Field2, 
+    Field3
+```
+
 **Examples**
 
 
@@ -2956,6 +2981,44 @@ CloudAppEvents
 | extend Data = parse_json(RawEventData)
 | take 1
 | project Timestamp, Application, Data
+```
+
+```kusto
+// check dlp history
+let dlp_history =
+    CloudAppEvents
+    | where TimeGenerated >= ago(90d)
+    | where ActionType =~ "DLPRuleMatch"
+    | where Application in ("Microsoft SharePoint Online",
+                            "Microsoft OneDrive for Business")
+    | where isnotempty(ObjectName)
+    | extend Raw = parse_json(RawEventData)
+    | extend
+        RawIncidentId       = tostring(Raw.IncidentId),
+        RawUserId           = tostring(Raw.UserId),
+        RawCreationTime     = todatetime(Raw.SharePointMetaData.ItemCreationTime),
+        RawLastModifiedTime = todatetime(Raw.SharePointMetaData.ItemLastModifiedTime),
+        RawFileID           = tostring(Raw.SharePointMetaData.FileID)
+    | mv-expand Policy = Raw.PolicyDetails
+    | extend
+        RawPolicyId   = tostring(Policy.PolicyId),
+        RawPolicyName = tostring(Policy.PolicyName)
+    | mv-expand Rule = Policy.Rules
+    | extend
+        RawRuleId   = tostring(Rule.RuleId),
+        RawRuleName = tostring(Rule.RuleName)
+    | extend ObjectName = url_decode(ObjectName)
+    | project
+        DLPTime       = TimeGenerated,
+        DLPAction     = ActionType,
+        DLPObjectName = ObjectName,
+        DLPUserId     = RawUserId,
+        DLPIncidentId = RawIncidentId,
+        DLPPolicyId   = RawPolicyId,
+        DLPPolicyName = RawPolicyName,
+        DLPRuleId     = RawRuleId,
+        DLPRuleName   = RawRuleName;
+dlp_history
 ```
 
 [back to top](#kql-intermediate-series)
