@@ -2919,7 +2919,7 @@ EmailPostDeliveryEvents
 
 **How `parse_json()` works**
 
-Before: AdditionalFields (string)
+Before: String columns that look like JSON
 
 ```string
 "{\"key1\":\"value1\",\"nested\":{\"a\":1,\"b\":2}}"
