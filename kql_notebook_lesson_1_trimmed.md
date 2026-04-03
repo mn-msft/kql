@@ -134,11 +134,11 @@ AlertEvidence | getschema
 ```
 
 ```kusto
-EntraSignInEvents | getschema
+EntraIdSignInEvents | getschema
 ```
 
 ```kusto
-EntraSpnSignInEvents | getschema
+EntraIdSpnSignInEvents | getschema
 ```
 
 ```kusto
@@ -243,7 +243,7 @@ IdentityLogonEvents
 
 ```kusto
 // Browse recent Entra sign-in events
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)
 // | where ErrorCode != 0  // Uncomment to filter failures only
 | take 10
@@ -323,7 +323,7 @@ CloudAppEvents
 
 ```kusto
 // Sign-in failures piped to clean output
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)
 | where ErrorCode != 0
 | project Timestamp, AccountUpn, Application, IPAddress, Country, ErrorCode
@@ -637,7 +637,7 @@ IdentityLogonEvents
 
 ```kusto
 // Efficient — time filter first on Entra sign-ins
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)   // ← filter early
 | where ErrorCode != 0
 | project Timestamp, AccountUpn, Application, IPAddress, ErrorCode
@@ -646,7 +646,7 @@ EntraSignInEvents
 ```kusto
 // Inefficient — project before filter wastes work
 // all rows flow through project before the ErrorCode filter
-EntraSignInEvents
+EntraIdSignInEvents
 | project Timestamp, AccountUpn, Application, IPAddress, ErrorCode
 | where Timestamp > ago(1d)
 | where ErrorCode != 0
@@ -711,7 +711,7 @@ search in (AlertInfo, AlertEvidence) "T1078"
 
 ```kusto
 // Search identity tables for a suspicious IP address
-search in (EntraSignInEvents, IdentityLogonEvents) "185.220.101.1"
+search in (EntraIdSignInEvents, IdentityLogonEvents) "185.220.101.1"
 | where Timestamp > ago(7d)
 ```
 
@@ -816,7 +816,7 @@ AlertEvidence | take 10
 ```
 
 ```kusto
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)
 | take 10
 ```
@@ -954,7 +954,7 @@ EmailPostDeliveryEvents
 
 ```kusto
 // Filter Entra sign-in failures
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(7d)
 | where ErrorCode != 0
 | project Timestamp, AccountUpn, Application, IPAddress, Country, ErrorCode
@@ -981,7 +981,7 @@ MessageEvents
 
 ```kusto
 // Filter Entra service principal sign-in failures
-EntraSpnSignInEvents
+EntraIdSpnSignInEvents
 | where Timestamp > ago(7d)
 | where ErrorCode != 0
 | project Timestamp, ServicePrincipalName, ApplicationId, IPAddress, ErrorCode
@@ -1053,7 +1053,7 @@ CloudAppEvents
 
 ```kusto
 // ErrorCode 0 means success in Entra sign-ins
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)
 | where ErrorCode == 0
 | project Timestamp, AccountUpn, Application, Country
@@ -1062,7 +1062,7 @@ EntraSignInEvents
 
 ```kusto
 // non-zero ErrorCode means failure
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)
 | where ErrorCode != 0
 | project Timestamp, AccountUpn, Application, IPAddress, ErrorCode
@@ -1203,7 +1203,7 @@ AlertInfo
 
 ```kusto
 // Combining and — sign-in failures from outside the US
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(7d)
 | where ErrorCode != 0
     and Country != "US"
@@ -1223,7 +1223,7 @@ AlertEvidence
 ```kusto
 // NOT in — exclude low-risk Entra error codes
 // 50125 = password reset, 50140 = keep me signed in
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(7d)
 | where ErrorCode !in (0, 50125, 50140)
 | project Timestamp, AccountUpn, Application, IPAddress, ErrorCode
@@ -1330,7 +1330,7 @@ IdentityInfo
 
 ```kusto
 // in~ — match Entra sign-in app names regardless of casing
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)
 | where Application in~ ("MICROSOFT TEAMS", "microsoft teams", "Microsoft Teams")
 | project Timestamp, AccountUpn, Application, IPAddress, Country
@@ -1436,7 +1436,7 @@ AlertInfo
 
 ```kusto
 // Rename sign-in columns for readable output
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)
 | project
     SignInTime   = Timestamp,
@@ -1558,13 +1558,13 @@ AlertEvidence
 ```
 
 ```kusto
-// review column order for EntraSignInEvents
-EntraSignInEvents | getschema
+// review column order for EntraIdSignInEvents
+EntraIdSignInEvents | getschema
 ```
 
 ```kusto
 // Reorder Entra sign-in columns — most useful first
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)
 | project-reorder Timestamp, AccountUpn, Application, IPAddress, Country, ErrorCode
 | take 10
@@ -1740,7 +1740,7 @@ AlertInfo
 
 ```kusto
 // Unique countries in Entra sign-in events
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(7d)
 | distinct Country
 ```
@@ -1849,7 +1849,7 @@ AlertInfo
 
 ```kusto
 // Sort Entra sign-in failures — newest first
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)
 | where ErrorCode != 0
 | sort by Timestamp desc
@@ -1981,7 +1981,7 @@ AlertInfo
 
 ```kusto
 // contains — partial match on sign-in user agent string
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)
 | where UserAgent contains "python"
 | project Timestamp, AccountUpn, Application, IPAddress, UserAgent
@@ -1990,7 +1990,7 @@ EntraSignInEvents
 
 ```kusto
 // startswith — find service principals by name prefix
-EntraSpnSignInEvents
+EntraIdSpnSignInEvents
 | where Timestamp > ago(7d)
 | where ServicePrincipalName startswith "app-"
 | project Timestamp, ServicePrincipalName, ApplicationId, IPAddress, ErrorCode
@@ -2099,7 +2099,7 @@ EmailEvents
 
 ```kusto
 // exclude apps that start with "Microsoft"
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(7d)
 | where Application !startswith "Microsoft"
 | distinct Application
@@ -2189,7 +2189,7 @@ AlertInfo
 
 ```kusto
 // Count failed Entra sign-ins in last 24h
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)
 | where ErrorCode != 0
 | count
@@ -2264,7 +2264,7 @@ EmailEvents
 
 ```kusto
 // Sign-ins during off-hours (before 6am or after 8pm UTC)
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(7d)
 | where hourofday(Timestamp) < 6 or hourofday(Timestamp) >= 20
 | project Timestamp, AccountUpn, Application, Country, ErrorCode
@@ -2273,7 +2273,7 @@ EntraSignInEvents
 
 ```kusto
 // Sign-in failures — non-zero error codes only
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(1d)
 | where ErrorCode > 0
 | project Timestamp, AccountUpn, Application, IPAddress, ErrorCode
@@ -2359,7 +2359,7 @@ CloudAppEvents
 
 ```kusto
 // Last 24 hours of Entra sign-in failures
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp >= ago(24h)
 | where ErrorCode != 0
 | take 10
@@ -2442,7 +2442,7 @@ CloudAppEvents
 
 ```kusto
 // Specific date range for Entra sign-in events
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp between (datetime(2026-01-01) .. datetime(2026-01-07))
 | project Timestamp, AccountUpn, Application, IPAddress, ErrorCode
 | take 10
@@ -2570,7 +2570,7 @@ AlertInfo
 
 ```kusto
 // How many minutes ago did each sign-in failure occur?
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(2h)
 | where ErrorCode != 0
 | extend MinutesAgo = datetime_diff('minute', now(), Timestamp)
@@ -2714,7 +2714,7 @@ AlertInfo
 
 ```kusto
 // Top 10 apps with most Entra sign-in failures
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(7d)
 | where ErrorCode != 0
 | summarize
@@ -2839,7 +2839,7 @@ AlertInfo
 
 ```kusto
 // Add a risk label based on Entra sign-in error code
-EntraSignInEvents
+EntraIdSignInEvents
 | where Timestamp > ago(7d)
 | extend SignInResult = iff(ErrorCode == 0, "Success", strcat("Failure (", tostring(ErrorCode), ")"))
 | project Timestamp, AccountUpn, Application, Country, SignInResult
