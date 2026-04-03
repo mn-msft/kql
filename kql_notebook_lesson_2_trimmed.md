@@ -2942,12 +2942,6 @@ Access:
 
 **Examples**
 
-**Review MS Bookings Audits**
-
-```kusto
-CloudAppEvents
-| search "Bookings"
-```
 
 ```kusto
 CloudAppEvents
