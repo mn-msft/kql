@@ -1,12 +1,12 @@
 <a id="kql-intermediate-series" name="kql-intermediate-series"></a>
-# KQL for Email Security — Intermediate Series
+# Microsoft Defender Advanced Hunting with KQL: Intermediate
 
-Building on beginner concepts with aggregations, joins, and variables.
+Building on foundational concepts with aggregations, joins, and variables.
 
 **Where to run these queries:** [Microsoft Defender portal](https://security.microsoft.com) → Investigation & response → Hunting → Advanced hunting
 
 ### Toolkit
-| Table | What It Tells You |
+| Table | What it tells you |
 |-------|------------------|
 | `EmailEvents` | Every email that touched your org |
 | `EmailAttachmentInfo` | Files attached to those emails |
@@ -15,37 +15,42 @@ Building on beginner concepts with aggregations, joins, and variables.
 | `EmailPostDeliveryEvents` | What happened after delivery (ZAP, moves, deletes) |
 | `IdentityLogonEvents` | User sign-ins and authentication |
 | `CloudAppEvents` | User actions in cloud apps (Exchange, SharePoint, etc.) |
-
-<br>
+| `AlertInfo` | Security alerts and their metadata |
+| `AlertEvidence` | Entities associated with each alert |
+| `MessageEvents` | Microsoft Teams messages |
+| `MessagePostDeliveryEvents` | Post-delivery actions on Teams messages |
+| `MessageUrlInfo` | URLs embedded in Teams messages |
+| `EntraIdSignInEvents` | Entra ID user sign-ins |
+| `EntraIdSpnSignInEvents` | Entra ID service principal sign-ins |
 
 <a id="toc" name="toc"></a>
 # Table of Contents
 
 1. [summarize](#summarize)
 2. [count()](#count)
-3. [min() / max()](#min-max)
-4. [make_set()](#make_set)
-5. [make_list()](#make_list)
-6. [make_bag()](#make_bag)
-7. [dcount()](#dcount)
-8. [arg_max() / arg_min()](#arg_max-arg_min)
+3. [countif() / sumif() / dcountif()](#countif)
+4. [min() / max()](#min-max)
+5. [make_set() / make_list() / make_bag()](#make_set)
+6. [dcount() / count_distinct()](#dcount)
+7. [arg_max() / arg_min()](#arg_max-arg_min)
+8. [take_any()](#take-any)
 9. [bin()](#bin)
 10. [render](#render)
-11. [countif() / sumif() / dcountif()](#countif)
-12. [datetime_diff()](#datetime_diff)
-13. [let](#let)
-14. [pack_array() / pack()](#pack_array-pack)
-15. [has_any / has_all](#has_any-has_all)
-16. [join](#join)
-17. [union](#union)
-18. [externaldata](#externaldata)
-19. [iif()](#iif)
-20. [case()](#case)
-21. [parse_json()](#parse_json)
-22. [isempty() / isnull()](#isempty-isnull)
-23. [Live Scenario: join](#live-scenario-join)
-24. [Live Scenario: bin() and render](#live-scenario-bin-render)
-25. [Common Gotchas & Tips](#common-gotchas-tips)
+11. [datetime_diff()](#datetime_diff)
+12. [let](#let)
+13. [Type conversion functions](#type-conversion)
+14. [pack_array() / bag_pack()](#pack_array-bag_pack)
+15. [join](#join)
+16. [union](#union)
+17. [externaldata](#externaldata)
+18. [lookup](#lookup)
+19. [iif() / case()](#iif)
+20. [parse_json()](#parse_json)
+21. [isempty() / isnull()](#isempty-isnull)
+22. [coalesce()](#coalesce)
+23. [Live scenario: join](#live-scenario-join)
+24. [Live scenario: bin() and render](#live-scenario-bin-render)
+25. [Common gotchas & tips](#common-gotchas-tips)
 ---
 
 <a id="summarize" name="summarize"></a>
@@ -115,19 +120,19 @@ CloudAppEvents                                  // Query cloud application activ
 ```
 
 ```kusto
-// Count attachments by file type
+// Count attachments by file extension
 EmailAttachmentInfo                  // Query email attachment metadata
 | where Timestamp > ago(7d)          // Limit to attachments from the last 7 days
-| summarize                          // Aggregate by file type
-    AttachmentCount = count()        // Total number of attachments per file type
-    by FileExtension                      // One row per file type
+| summarize                          // Aggregate by file extension
+    AttachmentCount = count()        // Total number of attachments per file extension
+    by FileExtension                      // One row per file extension
 | sort by AttachmentCount desc       // Sort by attachment volume
-| take 10                            // Return top 10 file types
+| take 10                            // Return top 10 file extensions
 // | top 10 by AttachmentCount desc
 ```
 
 ```kusto
-// Largest attachment senders (files > 5 MB, last 30 days)
+// Largest attachment senders (files > 5 MB, last 14 days)
 EmailAttachmentInfo                                             // Query email attachment metadata
 | where Timestamp > ago(14d)                                    // Limit to attachments from the last 14 days
 | where FileSize > 5000000                                      // Only include attachments larger than 5 MB
@@ -156,16 +161,16 @@ EmailEvents                                         // Query the EmailEvents tab
 ```
 
 ```kusto
-// avg() - average file size by type
+// avg() - average file size by extension
 EmailAttachmentInfo                             // Query email attachment metadata
 | where Timestamp > ago(7d)                     // Limit to attachments from the last 7 days
-| summarize                                     // Aggregate size statistics by file type
+| summarize                                     // Aggregate size statistics by file extension
     AvgSize = round(avg(FileSize), 3),          // Average attachment size (bytes)
     MinSize = min(FileSize),                    // Smallest attachment size
     MaxSize = max(FileSize)                     // Largest attachment size
-    by FileExtension                            // One row per file type
+    by FileExtension                            // One row per file extension
 | sort by AvgSize                               // Sort by average attachment size
-| take 10                                       // Return top 10 file types
+| take 10                                       // Return top 10 file extensions
 ```
 
 ```kusto
@@ -242,14 +247,14 @@ EmailUrlInfo
 ## count()
 
 - Aggregation function; counts the number of rows or items.
-- Used inside `summarize`. Only valid in aggregation context
+- Used inside `summarize`. Only valid in aggregation context.
 
 **Examples**
 
 ```kusto
 EmailEvents
 | where RecipientEmailAddress == "user@contoso.com"
-| where DeliveryLocation contains "Inbox"
+| where DeliveryLocation has "Inbox"
 | summarize Count = count() by SenderFromDomain
 ```
 
@@ -300,6 +305,184 @@ EmailPostDeliveryEvents
 
 ---
 
+<a id="countif" name="countif"></a>
+## countif() / sumif() / dcountif()
+
+- Conditional aggregations inside `summarize`.
+- `countif()` — count only where condition is true.
+- `sumif()` — sum values only where condition is true.
+- `dcountif()` — count distinct values only where condition is true.
+- Allows multiple filtered aggregations in one query.
+
+**How conditional aggregations work**
+
+<pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
+Example:
+
+Before: Email delivery data
+┌─────────────┬──────────────────┐
+│ ActionType  │ DeliveryLocation │
+├─────────────┼──────────────────┤
+│ Delivered   │ Inbox            │  ← countif(DeliveryLocation == "Inbox")
+│ Delivered   │ Junk             │
+│ Blocked     │ Quarantine       │  ← countif(ActionType == "Blocked")
+│ Delivered   │ Inbox            │  ← countif(DeliveryLocation == "Inbox")
+│ Delivered   │ Junk             │
+└─────────────┴──────────────────┘
+                    │
+    | summarize 
+        InboxCount = countif(DeliveryLocation == "Inbox"),
+        BlockedCount = countif(ActionType == "Blocked"),
+        TotalCount = count()
+                    │
+                    ▼
+After: Aggregated counts
+┌────────────┬──────────────┬────────────┐
+│ InboxCount │ BlockedCount │ TotalCount │
+├────────────┼──────────────┼────────────┤
+│ 2          │ 1            │ 5          │
+└────────────┴──────────────┴────────────┘
+</pre>
+
+**Examples**
+
+```kusto
+EmailEvents                                                         // Query the EmailEvents table
+| where RecipientEmailAddress == "user@contoso.com"                 // Filter to a specific recipient mailbox
+| summarize                                                         // Aggregate email delivery results into time buckets
+    InboxDelivered = countif(DeliveryLocation contains "Inbox")     // Count messages delivered to Inbox
+    by bin(Timestamp, 1h)                                           // Group results into 1-hour time bins
+```
+
+```kusto
+EmailEvents                                                 // Query the EmailEvents table
+| where Timestamp > ago(7d)
+| summarize                                                 // Aggregate by sender domain
+    Total = count(),                                        // Total messages from this sender
+    WithAttachments = countif(AttachmentCount > 0)          // Messages that included at least one attachment
+    by SenderFromDomain                                     // One row per sender domain
+| sort by Total desc
+```
+
+```kusto
+IdentityLogonEvents                                         // Query identity logon events
+| summarize                                                 // Aggregate authentication results by application
+    FailedLogons = countif(ActionType == "LogonFailed")     // Count failed sign-in attempts
+    by Application                                          // One row per application
+```
+
+```kusto
+// Count high vs medium vs low alerts in a single pass
+AlertInfo
+| where Timestamp > ago(7d)
+| summarize
+    HighCount   = countif(Severity == "High"),
+    MediumCount = countif(Severity == "Medium"),
+    LowCount    = countif(Severity == "Low"),
+    InfoCount   = countif(Severity == "Informational")
+```
+
+```kusto
+// Count Entra sign-in successes vs failures per app
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| summarize
+    Successes = countif(ErrorCode == 0),
+    Failures  = countif(ErrorCode != 0)
+    by Application
+| sort by Failures desc
+```
+
+```kusto
+// Count blocked clicks vs click-throughs per user
+UrlClickEvents
+| where Timestamp > ago(7d)
+| summarize
+    Blocked      = countif(ActionType == "ClickBlocked"),
+    ClickedThru  = countif(IsClickedThrough == true)
+    by AccountUpn
+| where Blocked > 0 or ClickedThru > 0
+| sort by Blocked desc
+```
+
+```kusto
+// Count ZAP vs manual remediation post-delivery actions
+EmailPostDeliveryEvents
+| where Timestamp > ago(7d)
+| summarize
+    ZapActions    = countif(ActionType has "ZAP"),
+    ManualActions = countif(ActionType has "Manual")
+```
+
+```kusto
+// Compare inbound vs outbound email sizes
+EmailEvents                                          // Query the EmailEvents table
+| where Timestamp > ago(7d)                          // Limit to last 7 days
+| summarize                                          // Multiple conditional aggregations
+    TotalEmails = count(),                           // All emails
+    InboundCount = countif(EmailDirection == "Inbound"),
+    OutboundCount = countif(EmailDirection == "Outbound"),
+    InboundWithAttachments = countif(EmailDirection == "Inbound" and AttachmentCount > 0),
+    OutboundWithAttachments = countif(EmailDirection == "Outbound" and AttachmentCount > 0)
+```
+
+```kusto
+// Sum attachment sizes by file type category
+EmailAttachmentInfo                                  // Query attachment metadata
+| where Timestamp > ago(7d)                          // Limit to last 7 days
+| summarize                                          // Conditional sums by file type
+    TotalSize = sum(FileSize),                       // All attachments
+    ExeSize = sumif(FileSize, FileType == "exe"),    // Executable files
+    PdfSize = sumif(FileSize, FileType == "pdf"),    // PDF files
+    DocSize = sumif(FileSize, FileType contains "doc"),   // Word documents
+    ZipSize = sumif(FileSize, FileType in ("zip", "rar", "7z"))  // Archives
+| extend                                             // Calculate percentages
+    ExePct = round(100.0 * ExeSize / TotalSize, 2),
+    PdfPct = round(100.0 * PdfSize / TotalSize, 2)
+```
+
+```kusto
+// Count unique senders by threat category
+EmailEvents                                          // Query the EmailEvents table
+| where Timestamp > ago(30d)                         // Limit to last 30 days
+| summarize                                          // Conditional distinct counts
+    TotalUniqueSenders = dcount(SenderFromAddress),
+    InboxSenders = dcountif(SenderFromAddress, DeliveryLocation == "Inbox"),
+    JunkSenders = dcountif(SenderFromAddress, DeliveryLocation == "JunkFolder"),
+    QuarantinedSenders = dcountif(SenderFromAddress, DeliveryLocation == "Quarantine")
+```
+
+```kusto
+// Count distinct users with failures vs successes in Entra
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| summarize
+    UsersWithFailures = dcountif(AccountUpn, ErrorCode != 0),
+    UsersWithSuccess  = dcountif(AccountUpn, ErrorCode == 0)
+```
+
+```kusto
+// Count distinct alert titles by severity
+AlertInfo
+| where Timestamp > ago(7d)
+| summarize
+    UniqueHighAlerts   = dcountif(Title, Severity == "High"),
+    UniqueMediumAlerts = dcountif(Title, Severity == "Medium")
+```
+
+```kusto
+// Count distinct URLs by click outcome
+UrlClickEvents
+| where Timestamp > ago(7d)
+| summarize
+    UniqueBlockedUrls = dcountif(Url, ActionType == "ClickBlocked"),
+    UniqueClickedUrls = dcountif(Url, IsClickedThrough == true)
+```
+
+[back to top](#kql-intermediate-series)
+
+---
+
 <a id="min-max" name="min-max"></a>
 ## min() / max()
 
@@ -311,8 +494,8 @@ EmailPostDeliveryEvents
 ```kusto
 IdentityLogonEvents                 // Query the IdentityLogonEvents table (each row = a sign-in event)
 | summarize                         // Aggregate across all events in the dataset 
-    FirstSeen = min(Timestamp),     // Earliest timestamp observed (first time this identity logged on)  
-    LastSeen  = max(Timestamp)      // Most recent timestamp observed (last time this identity logged on)
+    FirstSeen = min(Timestamp),     // Earliest timestamp in the entire dataset
+    LastSeen  = max(Timestamp)      // Most recent timestamp in the entire dataset
 ```
 
 ```kusto
@@ -374,12 +557,25 @@ EmailPostDeliveryEvents
 | sort by LastAction desc
 ```
 
+```kusto
+// avg() — average file size by extension
+EmailAttachmentInfo
+| where Timestamp > ago(7d)
+| summarize AvgSize = round(avg(FileSize), 3) by FileExtension
+| sort by AvgSize desc
+| take 10
+```
+
 [back to top](#kql-intermediate-series)
 
 ---
 
 <a id="make_set" name="make_set"></a>
-## make_set()
+## make_set() / make_list() / make_bag()
+
+All three collect values from multiple rows into a single cell within `summarize`.
+
+### make_set()
 
 - Creates an array of unique values.
 - Useful for grouping unique domains, users, or actions.
@@ -469,15 +665,10 @@ UrlClickEvents
     by AccountUpn
 ```
 
-[back to top](#kql-intermediate-series)
+### make_list()
 
----
-
-<a id="make_list" name="make_list"></a>
-## make_list()
-
-- Creates an array of ALL values (including duplicates).
-- Use when you need to preserve duplicates or ordering.
+- Creates an array of all values (including duplicates).
+- Use when you need to preserve duplicates. Row order in the list matches input row order — sort before `summarize` if you need a specific order.
 
 **make_set() vs make_list()**
 
@@ -541,21 +732,16 @@ UrlClickEvents
 // List all action types per post-delivery message (ordered)
 EmailPostDeliveryEvents
 | where Timestamp > ago(7d)
-| sort by NetworkMessageId asc, Timestamp asc
+| sort by NetworkMessageId asc, Timestamp asc  // make_list() preserves row order — sort first to control list order
 | summarize
     ActionList = make_list(ActionType)
     by NetworkMessageId
 ```
 
-[back to top](#kql-intermediate-series)
-
----
-
-<a id="make_bag" name="make_bag"></a>
-## make_bag()
+### make_bag()
 
 - Collects key-value pairs into a JSON object.
-- Useful for combining multiple values into one column.
+- Produces a named JSON object — access values by key instead of by index, unlike the positional arrays from `make_set()` and `make_list()`.
 - Combines with `summarize` to create one JSON object per group.
 
 **How `make_bag()` works**
@@ -570,7 +756,7 @@ Before: Multiple rows per sender
 │ alice@contoso   │ Role        │ Manager     │
 └─────────────────┴─────────────┴─────────────┘
                   │
-    summarize make_bag(pack(Property, Value)) by Sender
+    summarize make_bag(bag_pack(Property, Value)) by Sender
                   │
                   ▼
 After: One row with JSON object
@@ -589,7 +775,7 @@ After: One row with JSON object
 EmailEvents                                          // Query the EmailEvents table
 | where Timestamp > ago(7d)                          // Limit to last 7 days
 | extend                                             // Create key-value pair for each row
-    EmailDetail = pack(                              // Pack fields into JSON object
+    EmailDetail = bag_pack(                              // Pack fields into JSON object
         "Subject", Subject,
         "Direction", EmailDirection,
         "Location", DeliveryLocation
@@ -605,7 +791,7 @@ EmailEvents                                          // Query the EmailEvents ta
 EmailAttachmentInfo                                  // Query email attachment metadata
 | where Timestamp > ago(7d)                          // Limit to last 7 days
 | extend                                             // Create key-value pair using filename as key
-    FileDetail = pack(FileName, FileSize)            // Pack filename → size mapping
+    FileDetail = bag_pack(FileName, FileSize)            // Pack filename → size mapping
 | summarize                                          // Aggregate by message
     AttachmentBag = make_bag(FileDetail)             // Merge into single JSON object
     by NetworkMessageId                              // One row per message
@@ -617,7 +803,7 @@ EmailAttachmentInfo                                  // Query email attachment m
 EmailEvents                                          // Query the EmailEvents table
 | where Timestamp > ago(7d)                          // Limit to last 7 days
 | extend                                             // Create sender → domain mapping
-    SenderMapping = pack(                            // Pack as key-value pair
+    SenderMapping = bag_pack(                            // Pack as key-value pair
         SenderFromAddress,                           // Sender email as key
         SenderFromDomain                             // Domain as value
     )
@@ -631,7 +817,7 @@ EmailAttachmentInfo                                  // Query email attachment m
 | where Timestamp > ago(7d)                          // Limit to last 7 days
 | where isnotempty(SHA256)                           // Only attachments with hash values
 | extend                                             // Create file type → hash mapping
-    HashMapping = pack(FileType, SHA256)             // Pack file type as key, hash as value
+    HashMapping = bag_pack(FileType, SHA256)             // Pack file type as key, hash as value
 | summarize                                          // Aggregate by sender
     FileHashBag = make_bag(HashMapping)              // Merge into lookup dictionary
     by SenderFromAddress                             // One row per sender
@@ -643,7 +829,7 @@ EmailAttachmentInfo                                  // Query email attachment m
 CloudAppEvents                                       // Query cloud application events
 | where Timestamp > ago(7d)                          // Limit to last 7 days
 | extend                                             // Create action → object mapping
-    ActionMapping = pack(                            // Pack action details
+    ActionMapping = bag_pack(                            // Pack action details
         ActionType,                                  // Action type as key
         ObjectName                                   // Object affected as value
     )
@@ -659,7 +845,7 @@ EmailPostDeliveryEvents                              // Query post-delivery even
 | where Timestamp > ago(7d)                          // Limit to last 7 days
 | where ActionType != "Dynamic Delivery"
 | extend                                             // Create action details mapping
-    ActionMapping = pack(                            // Pack action details
+    ActionMapping = bag_pack(                            // Pack action details
         "Action", Action,                            // Action taken on the entity
         "ActionType", ActionType,                    // Type (ZAP, Manual remediation)
         "ActionTrigger", ActionTrigger,              // What triggered it (Admin, ZAP, etc.)
@@ -676,7 +862,7 @@ EmailPostDeliveryEvents                              // Query post-delivery even
 AlertEvidence
 | where Timestamp > ago(7d)
 | extend
-    EvidenceDetail = pack(
+    EvidenceDetail = bag_pack(
         "EntityType",  EntityType,
         "EvidenceRole", EvidenceRole
     )
@@ -691,7 +877,7 @@ EntraIdSignInEvents
 | where Timestamp > ago(7d)
 | where ErrorCode != 0
 | extend
-    FailureDetail = pack(
+    FailureDetail = bag_pack(
         Application, ErrorCode
     )
 | summarize
@@ -704,7 +890,7 @@ EntraIdSignInEvents
 UrlClickEvents
 | where Timestamp > ago(7d)
 | extend
-    ClickDetail = pack(
+    ClickDetail = bag_pack(
         ActionType, Url
     )
 | summarize
@@ -718,7 +904,7 @@ EmailEvents
     SenderFromAddress, 
     RecipientEmailAddress
 | summarize RecipientsAndCount = make_bag(
-    pack(
+    bag_pack(
         RecipientEmailAddress, 
         RecipientCount
         )
@@ -727,15 +913,26 @@ EmailEvents
 | take 20
 ```
 
+> `bag_pack()` builds a named JSON object from field values. `make_bag()` aggregates those objects across multiple rows into one combined JSON object. They are typically used together: `bag_pack()` per row, then `make_bag()` in a `summarize`.
+
+**Function comparison**
+
+| Function | Output | Dedupe | Use when |
+|---|---|---|---|
+| `make_set()` | Array | Yes — unique values only | You want distinct values per group |
+| `make_list()` | Array | No — duplicates preserved | You need order or frequency |
+| `make_bag()` | JSON object | No — key-value pairs | You want named pairs instead of an array |
+
 [back to top](#kql-intermediate-series)
 
 ---
 
 <a id="dcount" name="dcount"></a>
-## dcount()
+## dcount() / count_distinct()
 
-- Counts distinct values efficiently.
-- Approximates distinct counts on large data.
+- Counts distinct values using an approximation — fast and efficient on large datasets.
+- Accurate enough for investigations and dashboards.
+- For exact counts in reports or escalations, use `count_distinct()` instead.
 
 **Examples**
 
@@ -797,6 +994,37 @@ EmailUrlInfo
 | sort by DistinctDomains desc
 ```
 
+**count_distinct() — exact distinct count**
+
+`count_distinct(col)` returns an **exact** count of unique values — unlike `dcount()`, which uses an approximation.
+Use it when accuracy matters more than performance. On large datasets it is significantly more expensive than `dcount()`.
+
+Rule of thumb: use `dcount()` for dashboards and exploration. Use `count_distinct()` when you need a confirmed exact figure.
+
+**Examples**
+
+```kusto
+// count_distinct() vs dcount() — exact vs approximate unique sender count
+// dcount() is faster on large datasets; count_distinct() guarantees an exact result
+EmailEvents
+| where Timestamp > ago(7d)
+| summarize
+    Approx = dcount(SenderFromAddress),
+    Exact  = count_distinct(SenderFromAddress)
+```
+
+```kusto
+// count_distinct() — exact figures for reporting and compliance
+// Use when presenting numbers to stakeholders who need verified counts
+EntraIdSignInEvents
+| where Timestamp > ago(30d)
+| where ErrorCode != 0
+| summarize
+    UniqueCountries = count_distinct(Country),
+    UniqueUsers     = count_distinct(AccountUpn)
+| project UniqueCountries, UniqueUsers
+```
+
 [back to top](#kql-intermediate-series)
 
 ---
@@ -804,8 +1032,9 @@ EmailUrlInfo
 <a id="arg_max-arg_min" name="arg_max-arg_min"></a>
 ## arg_max() / arg_min()
 
-- `arg_max()` returns the row with the maximum value of a column — use for the latest or most recent record per group.
-- `arg_min()` returns the row with the minimum value of a column — use for the earliest or first record per group.
+### arg_max()
+
+- Returns the row with the maximum value of a column — use for the latest or most recent record per group.
 
 **How `arg_max()` works**
 
@@ -900,6 +1129,10 @@ UrlClickEvents
     by AccountUpn
 ```
 
+### arg_min()
+
+- Returns the row with the minimum value — use for the earliest or first record per group.
+
 **How `arg_min()` works**
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
@@ -969,6 +1202,52 @@ UrlClickEvents
 | summarize
     arg_min(Timestamp, Url, ActionType)
     by AccountUpn
+```
+
+[back to top](#kql-intermediate-series)
+
+---
+
+<a id="take-any" name="take-any"></a>
+## take_any()
+
+- `take_any(col)` returns an arbitrary non-null value from the group — no ordering required.
+- Use when you need one representative value per group and the exact row doesn't matter.
+- Cheaper than `arg_max()` or `arg_min()` — skips the comparison step entirely.
+
+| | `arg_max()` / `arg_min()` | `take_any()` |
+|---|---|---|
+| Selection criteria | Most or least recent row by key column | Any row (arbitrary) |
+| Cost | Higher — requires ordering within group | Lower — stops at first non-null value |
+| Use when | You need the specific row with the highest or lowest value | You need any sample value per group |
+
+**Examples**
+
+```kusto
+// take_any() — one sample subject line per sender (arbitrary, not latest)
+// Use when you want a representative email per sender without the arg_max() overhead
+EmailEvents
+| where Timestamp > ago(7d)
+| summarize
+    SampleSubject = take_any(Subject),
+    EmailCount    = count()
+    by SenderFromAddress
+| sort by EmailCount desc
+| take 20
+```
+
+```kusto
+// take_any() — get a display name for each user in sign-in failures
+// AccountDisplayName varies per event; take_any() avoids the arg_max() overhead
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where ErrorCode != 0
+| summarize
+    DisplayName  = take_any(AccountDisplayName),
+    FailureCount = count()
+    by AccountUpn
+| sort by FailureCount desc
+| take 20
 ```
 
 [back to top](#kql-intermediate-series)
@@ -1059,233 +1338,158 @@ EmailPostDeliveryEvents
 <a id="render" name="render"></a>
 ## render
 
-- Adds visualization
+- Transforms tabular output into a visualization.
+- Chart type is specified after `render`.  
+
+
+| Chart type | Use when |
+|---|---|
+| `timechart` | Plotting values over time; requires a `datetime` column grouped by `bin()` |
+| `barchart` | Comparing values across categories (horizontal bars) |
+| `columnchart` | Same as `barchart` but rendered as vertical columns |
+| `piechart` | Showing proportional breakdown of a categorical total |
+| `scatterchart` | Comparing two numeric dimensions per row |
+| `anomalychart` | Visualises anomaly scores from `series_decompose_anomalies()` — requires `make-series` output |
+
+**Visual Renderings**
+
+```kusto
+| render timechart with (ysplit=panels)
+```
+![timechart](https://learn.microsoft.com/en-us/kusto/query/media/visualization-timechart/ysplit-panels.png?view=microsoft-fabric)
+
+```kusto
+| render barchart with (kind=stacked)
+```
+![anomaly](https://learn.microsoft.com/en-us/kusto/query/media/visualization-barchart/stacked-bar-chart.png?view=microsoft-fabric)
+
+```kusto
+| render columnchart with (ysplit=axes)
+```
+![anomaly](https://learn.microsoft.com/en-us/kusto/query/media/visualization-columnchart/column-chart-ysplit-axes.png?view=microsoft-fabric)
+
+```kusto
+| render piechart with(title="Storm Events by State")
+```
+![anomaly](https://learn.microsoft.com/en-us/kusto/query/media/visualization-piechart/pie-chart.png?view=microsoft-fabric)
+
+```kusto
+| render scatterchart with (xtitle="State population", title="Property damage by state", legend=hidden)
+```
+![scatterchart](https://learn.microsoft.com/en-us/kusto/query/media/visualization-scatterchart/scatter-chart.png?view=microsoft-fabric)
+
+```kusto
+| render anomalychart with(anomalycolumns=anomalies, title='Web app. traffic of a month, anomalies')
+```
+![anomaly](https://learn.microsoft.com/en-us/kusto/query/media/visualization-anomalychart/anomaly-chart.png?view=microsoft-fabric)
 
 **Examples**
 
 ```kusto
+// Email volume by hour — columnchart with two metrics on separate axes
+// ysplit=axes assigns each series its own y-axis when scales differ significantly
 EmailEvents
 | where Timestamp >= ago(1d)
-| summarize MessagesPerHourBlock = count() by bin(Timestamp, 1h)
-| render columnchart 
+| summarize
+    TotalEmails     = count(),
+    WithAttachments = countif(AttachmentCount > 0)
+    by bin(Timestamp, 1h)
+| render columnchart with (
+    title='Hourly email volume',
+    ysplit=axes
+)
 ```
 
 ```kusto
-CloudAppEvents
-| summarize Count = count() by bin(Timestamp, 1h)
-| render timechart
-```
-
-```kusto
+// Inbound vs outbound email volume — timechart with separate panels per series
+// ysplit=panels renders each series in its own horizontal panel
 EmailEvents
-| summarize Total = count() by SenderFromDomain
-| render barchart
-```
-
-```kusto
-EmailEvents
-| summarize Direction = count() by EmailDirection
-| render 
-```
-
-```kusto
-// Alert volume over time — timechart
-AlertInfo
 | where Timestamp > ago(7d)
-| summarize AlertCount = count() by bin(Timestamp, 1h)
-| render timechart
+| where EmailDirection != "Unknown"
+| summarize Count = count() by bin(Timestamp, 1h), EmailDirection
+| render timechart with (
+    title='Email volume by direction',
+    ysplit=panels
+)
 ```
 
 ```kusto
-// Entra sign-in failures by country — barchart
+// Email delivery outcomes by direction — stacked barchart
+// kind=stacked requires two group-by dimensions: one for x-axis, one for the stack series
+EmailEvents
+| where Timestamp > ago(7d)
+| summarize Count = count() by EmailDirection, DeliveryLocation
+| render barchart with (
+    kind=stacked,
+    title='Delivery outcomes by email direction'
+)
+```
+
+```kusto
+// Email direction breakdown — piechart with title and visible legend
+EmailEvents
+| where Timestamp > ago(7d)
+| summarize Count = count() by EmailDirection
+| render piechart with (
+    title='Email direction breakdown',
+    legend=visible
+)
+```
+
+```kusto
+// Entra sign-in failures by country — barchart with axis labels
 EntraIdSignInEvents
 | where Timestamp > ago(7d)
 | where ErrorCode != 0
 | summarize Failures = count() by Country
-| render barchart
+| render barchart with (
+    title='Sign-in failures by country',
+    ytitle='Failure count',
+    legend=hidden
+)
 ```
 
 ```kusto
-// URL click action breakdown — piechart
+// URL click action breakdown — piechart with title
 UrlClickEvents
 | where Timestamp > ago(7d)
 | summarize Count = count() by ActionType
-| render piechart
-```
-
-[back to top](#kql-intermediate-series)
-
----
-
-<a id="countif" name="countif"></a>
-## countif() / sumif() / dcountif()
-
-- Conditional aggregations inside `summarize`.
-- `countif()` - count only where condition is true.
-- `sumif()` - Sum values only where condition is true.
-- `dcountif()` - Count distinct values only where condition is true.
-- Allows multiple filtered aggregations in one query.
-
-**How conditional aggregations work**
-
-<pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
-Example:
-
-Before: Email delivery data
-┌─────────────┬──────────────────┐
-│ ActionType  │ DeliveryLocation │
-├─────────────┼──────────────────┤
-│ Delivered   │ Inbox            │  ← countif(DeliveryLocation == "Inbox")
-│ Delivered   │ Junk             │
-│ Blocked     │ Quarantine       │  ← countif(ActionType == "Blocked")
-│ Delivered   │ Inbox            │  ← countif(DeliveryLocation == "Inbox")
-│ Delivered   │ Junk             │
-└─────────────┴──────────────────┘
-                    │
-    | summarize 
-        InboxCount = countif(DeliveryLocation == "Inbox"),
-        BlockedCount = countif(ActionType == "Blocked"),
-        TotalCount = count()
-                    │
-                    ▼
-After: Aggregated counts
-┌────────────┬──────────────┬────────────┐
-│ InboxCount │ BlockedCount │ TotalCount │
-├────────────┼──────────────┼────────────┤
-│ 2          │ 1            │ 5          │
-└────────────┴──────────────┴────────────┘
-</pre>
-
-**Examples**
-
-```kusto
-EmailEvents                                                         // Query the EmailEvents table
-| where RecipientEmailAddress == "user@contoso.com"                 // Filter to a specific recipient mailbox
-| summarize                                                         // Aggregate email delivery results into time buckets
-    InboxDelivered = countif(DeliveryLocation contains "Inbox")     // Count messages delivered to Inbox
-    by bin(Timestamp, 1h)                                           // Group results into 1-hour time bins
+| render piechart with (
+    title='URL click outcomes'
+)
 ```
 
 ```kusto
-EmailEvents                                                 // Query the EmailEvents table
-| summarize                                                 // Aggregate by sender domain
-    HighVolumeSenders = countif(NetworkMessageId != "")     // Count email events with a valid message ID
-    by SenderFromDomain                                     // One row per sender domain
-```
-
-```kusto
-IdentityLogonEvents                                         // Query identity logon events
-| summarize                                                 // Aggregate authentication results by application
-    FailedLogons = countif(ActionType == "LogonFailed")     // Count failed sign-in attempts
-    by Application                                          // One row per application
-```
-
-```kusto
-// Count high vs medium vs low alerts in a single pass
-AlertInfo
+// Sender volume vs attachment rate — scatterchart with axis labels
+// x-axis: total emails per sender domain, y-axis: % with attachments
+EmailEvents
 | where Timestamp > ago(7d)
 | summarize
-    HighCount   = countif(Severity == "High"),
-    MediumCount = countif(Severity == "Medium"),
-    LowCount    = countif(Severity == "Low"),
-    InfoCount   = countif(Severity == "Informational")
+    TotalEmails     = count(),
+    WithAttachments = countif(AttachmentCount > 0)
+    by SenderFromDomain
+| extend AttachmentRate = round(100.0 * WithAttachments / TotalEmails, 1)
+| where TotalEmails > 10
+| render scatterchart with (
+    title='Sender volume vs attachment rate',
+    xtitle='Total emails',
+    ytitle='Attachment rate (%)',
+    legend=hidden
+)
 ```
 
 ```kusto
-// Count Entra sign-in successes vs failures per app
-EntraIdSignInEvents
-| where Timestamp > ago(7d)
-| summarize
-    Successes = countif(ErrorCode == 0),
-    Failures  = countif(ErrorCode != 0)
-    by Application
-| sort by Failures desc
-```
-
-```kusto
-// Count blocked clicks vs click-throughs per user
-UrlClickEvents
-| where Timestamp > ago(7d)
-| summarize
-    Blocked      = countif(ActionType == "ClickBlocked"),
-    ClickedThru  = countif(IsClickedThrough == true)
-    by AccountUpn
-| where Blocked > 0 or ClickedThru > 0
-| sort by Blocked desc
-```
-
-```kusto
-// Count ZAP vs manual remediation post-delivery actions
-EmailPostDeliveryEvents
-| where Timestamp > ago(7d)
-| summarize
-    ZapActions    = countif(ActionType has "ZAP"),
-    ManualActions = countif(ActionType has "Manual")
-```
-
-```kusto
-// Compare inbound vs outbound email sizes
-EmailEvents                                          // Query the EmailEvents table
-| where Timestamp > ago(7d)                          // Limit to last 7 days
-| summarize                                          // Multiple conditional aggregations
-    TotalEmails = count(),                           // All emails
-    InboundCount = countif(EmailDirection == "Inbound"),
-    OutboundCount = countif(EmailDirection == "Outbound"),
-    InboundWithAttachments = countif(EmailDirection == "Inbound" and AttachmentCount > 0),
-    OutboundWithAttachments = countif(EmailDirection == "Outbound" and AttachmentCount > 0)
-```
-
-```kusto
-// Sum attachment sizes by file type category
-EmailAttachmentInfo                                  // Query attachment metadata
-| where Timestamp > ago(7d)                          // Limit to last 7 days
-| summarize                                          // Conditional sums by file type
-    TotalSize = sum(FileSize),                       // All attachments
-    ExeSize = sumif(FileSize, FileType == "exe"),    // Executable files
-    PdfSize = sumif(FileSize, FileType == "pdf"),    // PDF files
-    DocSize = sumif(FileSize, FileType has "doc"),   // Word documents
-    ZipSize = sumif(FileSize, FileType in ("zip", "rar", "7z"))  // Archives
-| extend                                             // Calculate percentages
-    ExePct = round(100.0 * ExeSize / TotalSize, 2),
-    PdfPct = round(100.0 * PdfSize / TotalSize, 2)
-```
-
-```kusto
-// Count unique senders by threat category
-EmailEvents                                          // Query the EmailEvents table
-| where Timestamp > ago(30d)                         // Limit to last 7 days
-| summarize                                          // Conditional distinct counts
-    TotalUniqueSenders = dcount(SenderFromAddress),
-    InboxSenders = dcountif(SenderFromAddress, DeliveryLocation == "Inbox"),
-    JunkSenders = dcountif(SenderFromAddress, DeliveryLocation == "JunkFolder"),
-    QuarantinedSenders = dcountif(SenderFromAddress, DeliveryLocation == "Quarantine")
-```
-
-```kusto
-// Count distinct users with failures vs successes in Entra
-EntraIdSignInEvents
-| where Timestamp > ago(7d)
-| summarize
-    UsersWithFailures = dcountif(AccountUpn, ErrorCode != 0),
-    UsersWithSuccess  = dcountif(AccountUpn, ErrorCode == 0)
-```
-
-```kusto
-// Count distinct alert titles by severity
-AlertInfo
-| where Timestamp > ago(7d)
-| summarize
-    UniqueHighAlerts   = dcountif(Title, Severity == "High"),
-    UniqueMediumAlerts = dcountif(Title, Severity == "Medium")
-```
-
-```kusto
-// Count distinct URLs by click outcome
-UrlClickEvents
-| where Timestamp > ago(7d)
-| summarize
-    UniqueBlockedUrls = dcountif(Url, ActionType == "ClickBlocked"),
-    UniqueClickedUrls = dcountif(Url, IsClickedThrough == true)
+// Anomaly chart — requires make-series and series_decompose_anomalies() (covered in L3)
+// anomalycolumns points to the column with the anomaly flag array
+// ad_flag: +1 = spike above baseline, -1 = dip, 0 = normal
+EmailEvents
+| where Timestamp > ago(14d)
+| make-series EmailCount = count() on Timestamp step 1h
+| extend (ad_flag, ad_score, baseline) = series_decompose_anomalies(EmailCount)
+| render anomalychart with (
+    anomalycolumns=ad_flag,
+    title='Email volume anomalies — last 14 days'
+)
 ```
 
 [back to top](#kql-intermediate-series)
@@ -1299,12 +1503,14 @@ UrlClickEvents
 - Returns difference in specified units (second, minute, hour, day, etc.).
 - Useful for measuring time between events.
 
+> Row-level sequencing (comparing each row to the previous one) requires `serialize` and `prev()` — covered in the advanced lesson.
+
 **How `datetime_diff()` works**
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
 datetime_diff('unit', datetime1, datetime2)
 
-Units: second, minute, hour, day, week, month, year
+Units: second, minute, hour, day, week, month, quarter, year
 
 Example:
 datetime_diff('minute', ClickTime, EmailTime)
@@ -1323,10 +1529,10 @@ datetime_diff('minute', ClickTime, EmailTime)
 ```kusto
 // Calculate time from email to URL click
 EmailEvents                                          // Query email events
-| where Timestamp between (datetime(2026-01-05) .. datetime(2026-01-07))
+| where Timestamp > ago(7d)                          // Rolling 7-day window
 | join kind=inner (                                  // Join with URL clicks
     UrlClickEvents
-    | where Timestamp between (datetime(2026-01-05) .. datetime(2026-01-07))
+    | where Timestamp > ago(7d)                      // Same rolling window
     | project                                        // Select click fields
         NetworkMessageId,
         ClickTime = Timestamp,
@@ -1352,39 +1558,28 @@ EmailEvents                                          // Query email events
 | where Timestamp > ago(30d)                         // Limit to last 30 days
 | extend                                             // Calculate days since received
     DaysInMailbox = datetime_diff('day', now(), Timestamp)
-| summarize                                          // Aggregate by age buckets
+| summarize                                          // Count emails per exclusive age window
     Last24Hours = countif(DaysInMailbox <= 1),
-    Last7Days = countif(DaysInMailbox <= 7),
-    Last30Days = countif(DaysInMailbox <= 30)
+    Days2to7    = countif(DaysInMailbox > 1 and DaysInMailbox <= 7),
+    Days8to30   = countif(DaysInMailbox > 7 and DaysInMailbox <= 30)
     by DeliveryLocation                              // Group by location
 ```
 
 ```kusto
-// Find rapid successive logins (potential credential stuffing)
-IdentityLogonEvents                                  // Query identity events
-| where Timestamp > ago(1d)                          // Limit to last 24 hours
-| sort by AccountUpn, Timestamp asc                  // Order by user and time
-| serialize                                          // Enable row functions
-| extend                                             // Get previous login time for same user
-    PrevTimestamp = prev(Timestamp),
-    PrevUser = prev(AccountUpn)
-| where AccountUpn == PrevUser                       // Same user consecutive logins
-| extend                                             // Calculate seconds between logins
-    SecondsBetweenLogins = datetime_diff('second', Timestamp, PrevTimestamp)
-| where SecondsBetweenLogins < 60                    // Less than 60 seconds apart
-| project                                            // Select output columns
-    Timestamp,
-    AccountUpn,
-    SecondsBetweenLogins,
-    Application,
-    ActionType
+// Find users with many logins in a single minute — possible session anomaly or password spray
+// Counts logins per user per minute; five or more in one minute is unusual
+IdentityLogonEvents
+| where Timestamp > ago(1d)
+| summarize LoginCount = count() by AccountUpn, bin(Timestamp, 1m)
+| where LoginCount > 5                               // More than 5 logins in a single minute
+| sort by LoginCount desc
 ```
 
 ```kusto
 // How old (in hours) are current open alerts?
 AlertInfo
 | where Timestamp > ago(7d)
-| extend AgeHours = datetime_diff("hour", now(), Timestamp)
+| extend AgeHours = datetime_diff('hour', now(), Timestamp)
 | project Timestamp, AgeHours, Title, Severity, Category
 | sort by AgeHours desc
 ```
@@ -1398,7 +1593,7 @@ EntraIdSignInEvents
     FirstFailure = min(Timestamp),
     LastFailure  = max(Timestamp)
     by AccountUpn
-| extend FailureSpanHours = datetime_diff("hour", LastFailure, FirstFailure)
+| extend FailureSpanHours = datetime_diff('hour', LastFailure, FirstFailure)
 | sort by FailureSpanHours desc
 ```
 
@@ -1410,7 +1605,7 @@ UrlClickEvents
     FirstClick = min(Timestamp),
     LastClick  = max(Timestamp)
     by AccountUpn
-| extend SpanHours = datetime_diff("hour", LastClick, FirstClick)
+| extend SpanHours = datetime_diff('hour', LastClick, FirstClick)
 | where SpanHours > 0
 | sort by SpanHours desc
 ```
@@ -1425,7 +1620,7 @@ UrlClickEvents
 - Use `let` to define variables or reusable expressions.
 - Variables can hold values, arrays, or table queries.
 
-**How `let` Works**
+**How `let` works**
 ```kusto
 let timeframe = 7d;                     // Value
 let badDomains = dynamic(["x","y"]);    // Array
@@ -1470,6 +1665,14 @@ failedLogons                                    // Reference the failedLogons su
     count()                                     // Count failed sign-in events per application
     by Application                              // One row per application
 ```
+
+**datatable — define an inline reference table**
+
+`datatable(Column:type, ...) [value1, value2, ...]` creates an in-memory table from literal values.
+Use it with `let` to define static reference data — severity maps, error code descriptions,
+IOC lists — without needing an external file or a persistent table.
+
+The example below creates a small user and order dataset to demonstrate join and lookup patterns.
 
 ```kusto
 // create tables
@@ -1533,21 +1736,71 @@ EntraIdSignInEvents
 
 ---
 
-<a id="pack_array-pack" name="pack_array-pack"></a>
-## pack_array() / pack()
+<a id="type-conversion" name="type-conversion"></a>
+## Type conversion functions
 
-- `pack_array()` combines columns into an **ordered array** — fields referenced by index.
-- `pack()` creates a **named JSON object** — fields referenced by key name.
+Values extracted from dynamic columns (e.g. via `parse_json()`) have no fixed type. Cast them to the correct type before filtering, comparing, or joining.
+
+| Function | Converts to |
+|---|---|
+| `tostring(v)` | String |
+| `toint(v)` | Integer |
+| `tolong(v)` | Large integer — use for counts, file sizes, and numeric timestamps |
+| `todouble(v)` | Decimal number |
+| `tobool(v)` | Boolean |
+| `todatetime(v)` | Datetime |
+| `totimespan(v)` | Timespan |
+
+All functions return `null` (not an error) when the value cannot be converted.
 
 **Examples**
 
-**pack_array() vs pack()**
+```kusto
+// Cast fields from parse_json() to the correct scalar types before use
+// Without tostring() / tolong(), filters and comparisons on dynamic fields may silently fail
+CloudAppEvents
+| where Timestamp > ago(7d)
+| where ActionType == "FileDownloaded"
+| extend Data     = parse_json(RawEventData)
+| extend FileName = tostring(Data.SourceFileName)
+| extend SizeMB   = tolong(Data.FileSize) / 1048576.0
+| where SizeMB > 10
+| project Timestamp, AccountDisplayName, FileName, SizeMB
+| take 20
+```
+
+```kusto
+// Cast multiple types from AdditionalFields in AlertEvidence
+// AdditionalFields schema varies by EntityType — cast each field defensively
+AlertEvidence
+| where Timestamp > ago(7d)
+| where EntityType == "Process"
+| extend Fields      = parse_json(AdditionalFields)
+| extend ProcessName = tostring(Fields.ProcessName)
+| extend ProcessId   = toint(Fields.ProcessId)
+| extend ParentPid   = toint(Fields.InitiatingProcessId)
+| where isnotempty(ProcessName)
+| project Timestamp, AlertId, ProcessName, ProcessId, ParentPid
+| take 20
+```
+
+[back to top](#kql-intermediate-series)
+
+---
+
+<a id="pack_array-bag_pack" name="pack_array-bag_pack"></a>
+## pack_array() / bag_pack()
+
+- `pack_array()` combines columns into an **ordered array** — fields referenced by index.
+- `bag_pack()` creates a **named JSON object** — fields referenced by key name.
+
+**pack_array() vs bag_pack()**
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
 pack_array(Sender, Recipient, Subject)
     → ["alice@contoso.com", "bob@fabrikam.com", "Invoice"]
 
-pack("Sender", Sender, "Recipient", Recipient, "Subject", Subject)
+bag_pack("Sender", Sender, "Recipient", Recipient, "Subject", Subject)
     → {
          "Sender": "alice@contoso.com",
          "Recipient": "bob@fabrikam.com",
@@ -1643,14 +1896,12 @@ EntraIdSignInEvents
 | take 10
 ```
 
-**`pack()` — Examples**
-
 ```kusto
 // Create a JSON object with email details
 EmailEvents                                          // Query the EmailEvents table
 | take 5                                             // Limit to 5 rows for demo
 | extend                                             // Add a new column with packed JSON
-    EmailSummary = pack(                             // Create JSON object with named keys
+    EmailSummary = bag_pack(                             // Create JSON object with named keys
         "Sender", SenderFromAddress,                 // Key-value pair for sender
         "Recipient", RecipientEmailAddress,          // Key-value pair for recipient
         "Subject", Subject                           // Key-value pair for subject
@@ -1663,7 +1914,7 @@ EmailEvents                                          // Query the EmailEvents ta
 IdentityLogonEvents                                  // Query identity logon events
 | take 5                                             // Limit to 5 rows for demo
 | extend                                             // Add a new column with packed JSON
-    LogonSummary = pack(                             // Create JSON object with named keys
+    LogonSummary = bag_pack(                             // Create JSON object with named keys
         "User", AccountUpn,                          // Key-value pair for user
         "App", Application,                          // Key-value pair for application
         "Result", ActionType                         // Key-value pair for logon result
@@ -1676,7 +1927,7 @@ IdentityLogonEvents                                  // Query identity logon eve
 EmailAttachmentInfo                                  // Query email attachment metadata
 | take 5                                             // Limit to 5 rows for demo
 | extend                                             // Add a new column with packed JSON
-    FileSummary = pack(                              // Create JSON object with named keys
+    FileSummary = bag_pack(                              // Create JSON object with named keys
         "Name", FileName,                            // Key-value pair for file name
         "Type", FileType,                            // Key-value pair for file type
         "SizeBytes", FileSize                        // Key-value pair for file size
@@ -1691,7 +1942,7 @@ AlertInfo
 | where Severity == "High"
 | take 5
 | extend
-    AlertSummary = pack(
+    AlertSummary = bag_pack(
         "Title",         Title,
         "Severity",      Severity,
         "Category",      Category,
@@ -1707,7 +1958,7 @@ EntraIdSignInEvents
 | where ErrorCode != 0
 | take 5
 | extend
-    FailureDetail = pack(
+    FailureDetail = bag_pack(
         "User",      AccountUpn,
         "App",       Application,
         "Country",   Country,
@@ -1722,7 +1973,7 @@ UrlClickEvents
 | where Timestamp > ago(7d)
 | take 5
 | extend
-    ClickDetail = pack(
+    ClickDetail = bag_pack(
         "User",            AccountUpn,
         "Url",             Url,
         "Action",          ActionType,
@@ -1735,88 +1986,27 @@ UrlClickEvents
 
 ---
 
-<a id="has_any-has_all" name="has_any-has_all"></a>
-## has_any / has_all
-
-- `has_any` finds if any word in a list exists in a string. **Token-based OR**
-- `has_all` requires all words to be present. **Token-based AND**
-- Different than `in()` as that is an **Exact-match OR**
-
-**Examples**
-
-```kusto
-EmailEvents
-| where Subject has_any ("invoice", "payment")
-```
-
-```kusto
-EmailEvents
-| where SenderFromAddress has_all ("microsoft","noreply")
-```
-
-```kusto
-EmailUrlInfo
-| where UrlDomain has_any ("contoso", "fabrikam")
-```
-
-```kusto
-// has_any — alerts related to credential or access attacks
-AlertInfo
-| where Timestamp > ago(7d)
-| where Category has_any ("CredentialAccess", "InitialAccess", "Persistence")
-| project Timestamp, Title, Category, Severity
-| take 20
-```
-
-```kusto
-// has_any — Entra sign-ins from automation or scripting apps
-EntraIdSignInEvents
-| where Timestamp > ago(7d)
-| where Application has_any ("PowerShell", "Graph Explorer", "Azure CLI")
-| project Timestamp, AccountUpn, Application, IPAddress, ErrorCode
-| take 20
-```
-
-```kusto
-// has_any — Teams messages flagged with any threat type
-MessageEvents
-| where Timestamp > ago(7d)
-| where ThreatTypes has_any ("Phish", "Malware", "Spam")
-| project Timestamp, TeamsMessageId, SenderEmailAddress, DeliveryAction, ThreatTypes
-| take 20
-```
-
-```kusto
-// has_any — post-delivery events for ZAP or manual remediation
-EmailPostDeliveryEvents
-| where Timestamp > ago(7d)
-| where ActionType has_any ("ZAP", "Manual")
-| project Timestamp, NetworkMessageId, ActionType, ThreatTypes
-| take 20
-```
-
-[back to top](#kql-intermediate-series)
-
----
-
 <a id="join" name="join"></a>
 ## join
 
 - `join` combines two tables based on matching keys.
-- Most common Join types: `inner`, `leftouter`, `leftsemi`, `leftanti`.
+- Most common join types: `inner`, `leftouter`, `leftsemi`, `leftanti`.
 
-
-**Key Takeaways**
-- **join adds columns**, not rows
+**Key takeaways**
+- **Join adds columns** from the right table to matching left rows — unlike `union`, which appends entire rows from a second table
 - Rows match where the **join key values are equal**
 - Columns from **both tables** can appear in the result
-- One-to-many matches cause **row duplication**
+- One-to-many matches cause **row duplication** — a left row is repeated for each match on the right
 - Join kind controls **which rows survive**
+
+![alt text](https://learn.microsoft.com/en-us/kusto/query/media/joinoperator/join-kinds.png?view=microsoft-fabric)
 
 **Examples**
 
 ### inner join
 Returns only rows where the key exists in **both** tables.
+
+![alt text](https://learn.microsoft.com/en-us/kusto/query/media/joinoperator/join-inner.png?view=microsoft-fabric)
 
 **Before**
 
@@ -1886,6 +2076,8 @@ Users                                                       // Start with Users 
 
 ### leftouter join
 Returns **all rows from the left** table, with nulls where no match exists on the right.
+
+![alt text](https://learn.microsoft.com/en-us/kusto/query/media/joinoperator/join-leftouter.png?view=microsoft-fabric)
 
 **Before**
 
@@ -1961,6 +2153,8 @@ Users                                                           // Start with Us
 Returns **left rows that have a match** in the right table, but **no right columns** are added.
 Use this when you only want to filter the left table.
 
+![alt text](https://learn.microsoft.com/en-us/kusto/query/media/joinoperator/join-leftsemi.png?view=microsoft-fabric)
+
 **Before**
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
@@ -2027,7 +2221,9 @@ Users                                                           // Start with Us
 ```
 
 ### leftanti join
-Returns **left rows that have NO match** in the right table. Useful for finding rows with no match.
+Returns **left rows that have no match** in the right table. Useful for finding rows with no match.
+
+![alt text](https://learn.microsoft.com/en-us/kusto/query/media/joinoperator/join-leftanti.png?view=microsoft-fabric)
 
 **Before**
 
@@ -2045,7 +2241,7 @@ EmailEvents - Left Table                                          EmailAttachmen
 </pre>
 
 **After – leftanti join (on `NetworkMessageId`)**
-> Keeps **left rows that have NO match** in right table
+> Keeps **left rows that have no match** in right table
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
 ┌──────────────────┬───────────┬────────────────┬────────┐
@@ -2097,7 +2293,7 @@ Users                                                           // Start with Us
 
 ---
 
-### Duplicates
+### Duplicate join keys in security telemetry
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
 EmailEvents (7 rows)                                      EmailAttachmentInfo (2 rows)
@@ -2133,6 +2329,8 @@ Result (14 rows)
 └───────────────────────┴──────────────────────┴───────────────┘
 </pre>
 
+<br>
+
 > If a join key is non-unique on both sides, the output row count is the product of the matches
 
 ```kusto
@@ -2155,11 +2353,9 @@ Emails                                                                  // Start
 // Each recipient appears twice (once per attachment)
 ```
 
-#### Duplicate Join Keys in Security Telemetry
-
 In Microsoft Defender Advanced Hunting tables, it is very common for the join key to appear multiple times.
 
-A good example is: ```NetworkMessageId```
+A good example is: `NetworkMessageId`
 
 In tables such as:
 
@@ -2169,7 +2365,7 @@ In tables such as:
 
 This key does not represent a single row. Instead, it represents a message entity that can fan out into multiple rows.
 
-Sample Scenarios:
+Sample scenarios:
 
 | Scenario | Resulting rows |
 |----------|----------------|
@@ -2177,7 +2373,7 @@ Sample Scenarios:
 | 5 attachments | 5 rows |
 | 5 recipients × 5 attachments | 25 rows |
 
-Sample Table:
+Sample table:
 
 | NetworkMessageId | Recipient | FileName |
 | ---------------- | --------- | -------- |
@@ -2188,14 +2384,14 @@ Sample Table:
 | A                | user2     | file2    |
 | ...              | ...       | ...      |
 
-Deduping the join key e.g. ```NetworkMessageId``` would lead to losing:
+Deduping the join key e.g. `NetworkMessageId` would lead to losing:
 
  - attachment identity
  - recipient fanout
  - attachment counts
  - investigative context
 
-**Dudupe methods**
+**Dedupe methods**
 
 ```kusto
 // group by NMID
@@ -2209,7 +2405,7 @@ EmailAttachmentInfo
 | distinct NetworkMessageId
 ```
 
-##### Scenario 1
+#### Scenario 1
 
 Preserve Message + Attachment relationship
 
@@ -2223,7 +2419,7 @@ EmailAttachmentInfo
 | distinct NetworkMessageId, FileName
 ```
 
-##### Scenario 2
+#### Scenario 2
 
 Preserve Message + Recipient relationship
 
@@ -2237,18 +2433,18 @@ EmailAttachmentInfo
 | distinct NetworkMessageId, RecipientEmailAddress
 ```
 
-##### Scenario 3
+#### Scenario 3
 
-Preserve All Details (no dedupe)
+Preserve all details (no dedupe)
 
 ```kusto
 EmailAttachmentInfo
 | project NetworkMessageId, FileName, RecipientEmailAddress
 ```
 
-##### Scenario 4
+#### Scenario 4
 
-Aggregation - One row per message
+Aggregation — one row per message
 
 ```kusto
 EmailAttachmentInfo
@@ -2258,9 +2454,9 @@ EmailAttachmentInfo
 by NetworkMessageId
 ```
 
-##### Row Explosion
+#### Row explosion
 
-5 x 25 = 125
+For example: 5 recipients × 25 attachments per message = 125 result rows.
 
 ```kusto
 EmailAttachmentInfo
@@ -2279,19 +2475,19 @@ _EE
 | join kind=inner EmailAttachmentInfo on NetworkMessageId
 ```
 
-##### Alternatives
+#### Alternatives
 
-Reshape first, one row per mesage on both side?
+Reshape first, one row per message on both sides?
 
 ```kusto
 let _Emails =
     EmailEvents
-    | where Timestamp > ago (1d)
+    | where Timestamp > ago(1d)
     | summarize Recipients = make_set(RecipientEmailAddress)
         by NetworkMessageId;
 let _Attachments =
     EmailAttachmentInfo
-    | where Timestamp > ago (1d)
+    | where Timestamp > ago(1d)
     | summarize
         Files = make_set(FileName),
         Hashes = make_set(SHA256),
@@ -2303,12 +2499,24 @@ _Emails
 
 ---
 
-### Different Interpretations
+### Different interpretations
+
+#### Version 1: top 20 largest files
+
+"Top 20 largest files by attachment size"
+
+- Selects the 20 largest files directly from EmailAttachmentInfo.
+- A single message with many large attachments can occupy all 20 slots.
+- The subsequent join with EmailEvents multiplies rows by recipient count.
+
+So the output is:
+
+> Up to 20 attachment rows before the join — a message with many large files can dominate all slots, and recipient fanout from the EmailEvents join applies after.
 
 ```kusto
 let Attachmentinfo =                                                // Define a subquery for large attachments
     EmailAttachmentInfo                                             // Query email attachment metadata
-    | where Timestamp >= ago(21d)                                   // Limit to attachments from the last x day
+    | where Timestamp >= ago(21d)                                   // Limit to attachments from the last x days
     | extend                                                        // Add a calculated size in MB
         FileSizeMB = round(FileSize / 1024.0 / 1024.0, 2)           // Convert bytes to MB
     | project                                                       // Select only required attachment fields
@@ -2350,9 +2558,9 @@ Attachmentinfo                                                      // Start wit
 | sort by FileSize desc                                             // Sort results by attachment size
 ```
 
-### Alternative Version
+#### Version 2: top 20 messages by largest single attachment
 
-“Top 20 messages by their largest attachment”
+”Top 20 messages by their largest attachment”
 
 - First you compute MaxFileSize per NetworkMessageId.
 - Then you keep the top 20 messages whose largest attachment is biggest.
@@ -2405,9 +2613,9 @@ EmailAttachmentInfo                                                 // Query att
     LatestDeliveryLocation
 ```
 
-### Another Alternative Version
+#### Version 3: top 20 unique (message + filename) pairs
 
-“Top 20 unique attachments by size”
+”Top 20 unique attachments by size”
 
 - You first dedupe to one row per (NetworkMessageId, FileName).
 - Then you join to one row of message metadata per message.
@@ -2469,7 +2677,7 @@ Attachments                                                         // Start fro
 | **"Top 20" means** | 20 largest files | 20 messages with the biggest single attachment | 20 largest unique (message + filename) pairs |
 | **Multi-attachment messages** | Can dominate all 20 slots | Yes — ranked by message, not file | Yes — deduped by (message, filename) |
 | **Duplicate attachment rows** | Susceptible | Partially mitigated | Yes — explicit dedupe |
-| **Row count guarantee** | No — duplicates can reduce distinct results | Can exceed 20 | Yes — exactly 20 |
+| **Row count guarantee** | No — duplicates can reduce distinct results | Can exceed 20 | Yes — up to 20 |
 
 Use Version 2 when you want to rank by message, not by individual file. Version 3 gives a clean, predictable result — 20 rows, no duplicates.
 
@@ -2511,8 +2719,8 @@ EmailEvents                                                      EmailAttachment
 └──────────────────┴───────────┴────────────────┴────────┴──────────────┴──────────┘
 </pre>
 
-**Key Takeaways**
-- **union adds rows**, not columns
+**Key takeaways**
+- **Union adds rows**, not columns
 - The result schema is the **union of all columns**
 - Rows represent **different entity types** (emails *and* attachments)
 - Columns that don't apply to a row are filled with **null**
@@ -2650,20 +2858,23 @@ union
 ## externaldata
 
 - Import external CSV or JSON data for comparison.
+- Supports public URLs and authenticated Azure Blob Storage URLs.
+- Azure Blob examples below use SAS token URLs — replace `<your-sas-token>` with a valid SAS token scoped to your own storage account and container.
 
-**Example**
+**Examples**
 
 ```kusto
+// Replace <your-host>/blocklist.csv with a real publicly accessible CSV URL
 externaldata(Domain:string)
-[@"https://raw.githubusercontent.com/MicrosoftDocs/microsoft-365-docs/main/domains.csv"]
+[@"https://<your-host>/blocklist.csv"]
 | join kind=inner (EmailUrlInfo) on $left.Domain == $right.UrlDomain
 ```
 
 ```kusto
 let imid =
     externaldata (Message_ID: string) [
-    @"https://bwdemoblob.blob.core.windows.net/curated/EmailEvents_20260120_160736.csv"
-    h@"?sp=r&st=2026-01-28T15:24:14Z&"
+    @"https://<your-account>.blob.core.windows.net/<container>/<file>.csv"
+    h@"?<your-sas-token>"
     ]
     with (format='csv', ignorefirstrecord=true)
     | project Message_ID;
@@ -2673,15 +2884,115 @@ imid;
 ```kusto
 let imid =
     externaldata (Message_ID:string) [
-        @"https://bwdemoblob.blob.core.windows.net/curated/EmailEvents_20260120_160736.csv"
-        h@"?sp=r&st=2026-01-28T"
+        @"https://<your-account>.blob.core.windows.net/<container>/<file>.csv"
+        h@"?<your-sas-token>"
     ]
     with (format='csv', ignorefirstrecord=true)
     | project Message_ID;
 EmailEvents
 | where Timestamp >= ago(30d)
 | where RecipientEmailAddress == "user@contoso.com"
-| where InternetMessageId has_any (imid)
+| where InternetMessageId in (imid)
+```
+
+[back to top](#kql-intermediate-series)
+
+---
+
+<a id="lookup" name="lookup"></a>
+## lookup
+
+- Adds fields from a smaller reference table to each row of a larger table.
+- A cleaner alternative to `leftouter join` when you just need to attach extra columns — no row multiplication when the lookup key is unique in the right table.
+- The right (lookup) table should be small — a `datatable`, `externaldata`, or pre-summarized result.
+- Common use: matching against watchlists — known-bad IPs, blocked domains, allow/deny lists.
+- No row multiplication when the lookup table's join key is unique — if duplicate keys exist in the lookup table, rows will multiply as with a join.
+
+**How `lookup` differs from join**
+
+<pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
+join   → general purpose, both tables can be large, multiple join types
+lookup → for adding columns from a small reference table:
+         - right table should be small
+         - no row multiplication — assuming the lookup key is unique in the right table
+         - use when: "add context from a reference table to each event row"
+</pre>
+
+**Examples**
+
+
+```kusto
+// Match email URLs against a threat intelligence table
+let ThreatIntel = datatable(Domain:string, ThreatCategory:string, Confidence:string)
+[
+    "evil-phishing.com",   "Phishing",              "High",
+    "malware-host.net",    "Malware",               "High",
+    "suspicious-cdn.io",   "C2",                    "Medium",
+    "fake-login.org",      "Credential Harvesting", "High"
+];
+EmailUrlInfo
+| where Timestamp > ago(7d)
+| lookup kind=leftouter ThreatIntel on $left.UrlDomain == $right.Domain
+| where isnotempty(ThreatCategory)
+| project Timestamp, NetworkMessageId, UrlDomain, ThreatCategory, Confidence
+| take 20
+```
+
+```kusto
+// Add human-readable error descriptions to Entra sign-in failures
+let ErrorCodeMap = datatable(ErrorCode:int, ErrorMeaning:string)
+[
+    50126, "Invalid credentials — bad username or password",
+    50053, "Account locked out",
+    50057, "Account disabled",
+    50074, "MFA required but not completed",
+    50076, "MFA required for this resource",
+    53003, "Conditional Access blocked"
+];
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where ErrorCode != 0
+| lookup kind=leftouter ErrorCodeMap on ErrorCode
+| project Timestamp, AccountUpn, Application, IPAddress, ErrorCode, ErrorMeaning
+| sort by Timestamp desc
+| take 20
+```
+
+```kusto
+// Map alert severity to response SLA and flag breached alerts
+let SLAMapping = datatable(Severity:string, ResponseSLAHours:int, Priority:string)
+[
+    "High",          1,  "P1",
+    "Medium",        4,  "P2",
+    "Low",          24,  "P3",
+    "Informational", 72, "P4"
+];
+AlertInfo
+| where Timestamp > ago(7d)
+| lookup kind=leftouter SLAMapping on Severity
+| extend AgeHours    = datetime_diff('hour', now(), Timestamp)
+| extend SLABreached = AgeHours > ResponseSLAHours
+| where SLABreached
+| project Timestamp, Title, Severity, Priority, AgeHours, ResponseSLAHours
+| sort by AgeHours desc
+| take 20
+```
+
+```kusto
+// Combine externaldata + lookup for public IOC feed matching
+let MaliciousHashes = (
+    externaldata(sha256_hash: string)
+    [@"https://bazaar.abuse.ch/export/txt/sha256/recent/"]
+    with (format='txt')
+    | where sha256_hash !startswith "#"
+    | project sha256_hash
+);
+EmailAttachmentInfo
+| where Timestamp > ago(7d)
+| where isnotempty(SHA256)
+| lookup kind=inner MaliciousHashes on $left.SHA256 == $right.sha256_hash
+| project Timestamp, SenderFromAddress, RecipientEmailAddress, FileName, SHA256
+| take 20
 ```
 
 [back to top](#kql-intermediate-series)
@@ -2689,16 +3000,21 @@ EmailEvents
 ---
 
 <a id="iif" name="iif"></a>
-## iif()
+## iif() / case()
+
+Two operators for conditional logic — `iif()` returns one of two values based on a condition; `case()` evaluates multiple conditions in sequence and returns the first matching result.
+
+### iif()
 
 - Conditional expression returning one of two values.
-- iff(condition, value-if-true, value-if-false)
-- Strictly a single if / else expression. Cannot be chained e.g. if / elseif / elseif / ... / else
+- `iif(condition, value-if-true, value-if-false)`
+- Strictly a single if / else expression. Cannot be chained e.g. if / elseif / elseif / ... / else.
 
 **Examples**
 
 ```kusto
 IdentityLogonEvents                         // Query identity logon events
+| where Timestamp > ago(7d)                 // Limit to last 7 days
 | extend                                    // Add a derived risk classification column
     Risk = iif(                             // Conditional logic (if / else)
         ActionType == "LogonFailed",        // If the logon attempt failed
@@ -2711,6 +3027,7 @@ IdentityLogonEvents                         // Query identity logon events
 
 ```kusto
 EmailAttachmentInfo                   // Query email attachment metadata
+| where Timestamp > ago(7d)           // Limit to last 7 days
 | extend                              // Add a derived size classification column
     IsLarge = iif(                    // Conditional logic (if / else)
         FileSize > 5000000,           // If attachment size is greater than 5 MB
@@ -2761,15 +3078,10 @@ UrlClickEvents
 | take 20
 ```
 
-[back to top](#kql-intermediate-series)
-
----
-
-<a id="case" name="case"></a>
-## case()
+### case()
 
 - Multi-condition branching (more flexible than `iif()`).
-- Evaluates conditions in order, returns first match. It stops evaluation for that specific row, not all together.
+- Evaluates conditions in order, returns first match. Once a condition matches for a row, the remaining conditions for that row are skipped — each row is evaluated independently.
 - Works like an ordered if / elseif chain.
 
 **How `case()` works**
@@ -2919,12 +3231,12 @@ EmailPostDeliveryEvents
 
 **How `parse_json()` works**
 
-Before: String columns that look like JSON
+**Before:** String columns that look like JSON
 
 ```string
 "{\"key1\":\"value1\",\"nested\":{\"a\":1,\"b\":2}}"
 ```
-After: Dynamic Object
+**After:** Dynamic object
 ```json
 {
    "key1": "value1",
@@ -2935,20 +3247,18 @@ After: Dynamic Object
 }
 ```
 
-Access:  
-        Data.key1 = "value1"  
-        Data.nested.a = 1  
-        Data["nested"]["b"] = 2
+**Access:**
+```
+Data.key1 = "value1"
+Data.nested.a = 1
+Data["nested"]["b"] = 2
+```
 
-### Parsing Workflow
-
-1) identify the dynamic column
-2) `parse_json()` it
-3) inspect keys if needed
-4) flatten fields with extend
-5) project the clean output
-
-**Dynamic Column template**
+- Identify the dynamic column.
+- Use `parse_json()` to convert it to a queryable object.
+- Inspect keys if needed: `| take 1 | project Parsed`.
+- Flatten fields with `extend` and cast to the correct type.
+- Project the clean output.
 ```kusto
 SomeTable
 | where Timestamp >= ago(7d)
@@ -2966,7 +3276,6 @@ SomeTable
 ```
 
 **Examples**
-
 
 ```kusto
 CloudAppEvents
@@ -2987,7 +3296,7 @@ CloudAppEvents
 // check dlp history
 let dlp_history =
     CloudAppEvents
-    | where TimeGenerated >= ago(90d)
+    | where Timestamp >= ago(90d)
     | where ActionType =~ "DLPRuleMatch"
     | where Application in ("Microsoft SharePoint Online",
                             "Microsoft OneDrive for Business")
@@ -3009,7 +3318,7 @@ let dlp_history =
         RawRuleName = tostring(Rule.RuleName)
     | extend ObjectName = url_decode(ObjectName)
     | project
-        DLPTime       = TimeGenerated,
+        DLPTime       = Timestamp,
         DLPAction     = ActionType,
         DLPObjectName = ObjectName,
         DLPUserId     = RawUserId,
@@ -3029,28 +3338,30 @@ dlp_history
 ## isempty() / isnull()
 
 - Check for missing or blank values.
-- `isnull()` checks for null values, `isempty()` checks for empty strings.
+- `isnull()` checks for null only. `isempty()` checks for empty strings and null — it returns true for both.
 
-**Understanding Empty vs Null**
+**Understanding empty vs null**
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
 ┌──────────────────┬─────────────┬─────────────┬─────────────────┐
 │ Value            │ isnull()    │ isempty()   │ isnotempty()    │
 ├──────────────────┼─────────────┼─────────────┼─────────────────┤
-│ null             │ true        │ false       │ false           │
+│ null             │ true        │ true        │ false           │
 │ ""               │ false       │ true        │ false           │
 │ "hello"          │ false       │ false       │ true            │
 │ "   "            │ false       │ false       │ true            │
 └──────────────────┴─────────────┴─────────────┴─────────────────┘
-
-Tip: Use isnotempty() to filter out BOTH null and empty strings
 </pre>
+
+<br>
+
+> Use `isnotempty()` to filter out both null and empty strings
 
 **Examples**
 
 ```kusto
 EmailEvents
-| where isnull(SenderFromDomain) or isempty(SenderFromDomain)
+| where isempty(SenderFromDomain)
 ```
 
 ```kusto
@@ -3067,7 +3378,7 @@ IdentityLogonEvents
 // Find alerts with no category assigned
 AlertInfo
 | where Timestamp > ago(7d)
-| where isempty(Category) or isnull(Category)
+| where isempty(Category)
 | project Timestamp, AlertId, Title, Severity, ServiceSource
 ```
 
@@ -3075,7 +3386,7 @@ AlertInfo
 // Find Entra sign-in events with no country data
 EntraIdSignInEvents
 | where Timestamp > ago(7d)
-| where isempty(Country) or isnull(Country)
+| where isempty(Country)
 | project Timestamp, AccountUpn, Application, IPAddress, ErrorCode
 ```
 
@@ -3091,7 +3402,7 @@ MessageEvents
 // Find email URLs with no domain recorded
 EmailUrlInfo
 | where Timestamp > ago(7d)
-| where isempty(UrlDomain) or isnull(UrlDomain)
+| where isempty(UrlDomain)
 | project Timestamp, NetworkMessageId, Url
 ```
 
@@ -3099,66 +3410,93 @@ EmailUrlInfo
 
 ---
 
-<a id="live-scenario-join" name="live-scenario-join-investigation"></a>
-## Live Scenario: join
+<a id="coalesce" name="coalesce"></a>
+## coalesce()
 
-### Scenario
-You need to investigate emails with suspicious attachments and correlate them with URL click behavior.
+- `coalesce(v1, v2, ...)` returns the first non-null value from the argument list.
+- Use it to fill in missing data from a fallback field — cleaner than nested `iif(isnull(...), ..., ...)`.
 
-### Your Mission
-1. Find emails with attachments from external senders
-2. Join with URL data to see if those emails contained links
-3. Check if any recipients clicked those links
-
-### Skills Tested
-- `join` with multiple tables
-- `let` for variable pivoting
-- Combining `EmailEvents`, `EmailAttachmentInfo`, `EmailUrlInfo`, `UrlClickEvents`
+**Examples**
 
 ```kusto
-// Try
+// coalesce() — use display name if present, fall back to email address
+// SenderDisplayName is sometimes null; fall back to SenderFromAddress
+EmailEvents
+| where Timestamp > ago(7d)
+| extend SenderLabel = coalesce(SenderDisplayName, SenderFromAddress)
+| project Timestamp, SenderLabel, SenderFromAddress, Subject
+| take 20
+```
 
+```kusto
+// coalesce() — fill missing AccountDisplayName from AccountUpn
+// Display names are not always populated in Entra sign-in events
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where ErrorCode != 0
+| extend Identity = coalesce(AccountDisplayName, AccountUpn)
+| project Timestamp, Identity, Application, IPAddress, ErrorCode
+| sort by Timestamp desc
+| take 20
+```
 
-
-
-
-
-
-
-
+```kusto
+// coalesce() — cascade across multiple possible identifier fields
+// Use when different log sources contribute different identity columns
+AlertEvidence
+| where Timestamp > ago(7d)
+| where EntityType == "Machine"
+| extend DeviceLabel = coalesce(DeviceName, tostring(DeviceId), "Unknown")
+| project Timestamp, AlertId, DeviceLabel
+| take 20
 ```
 
 [back to top](#kql-intermediate-series)
 
 ---
 
-<a id="live-scenario-bin-render" name="live-scenario-time-analysis"></a>
-## Live Scenario: bin() and render
+<a id="live-scenario-join" name="live-scenario-join"></a>
+## Live scenario: join
+
+### Scenario
+You need to investigate emails with suspicious attachments and correlate them with URL click behavior.
+
+### Your mission
+1. Find emails with attachments from external senders
+2. Join with URL data to see if those emails contained links
+3. Check if any recipients clicked those links
+
+### Skills tested
+- `join` with multiple tables
+- `let` for variable pivoting
+- Combining `EmailEvents`, `EmailAttachmentInfo`, `EmailUrlInfo`, `UrlClickEvents`
+
+```kusto
+// Try it yourself
+```
+
+[back to top](#kql-intermediate-series)
+
+---
+
+<a id="live-scenario-bin-render" name="live-scenario-bin-render"></a>
+## Live scenario: bin() and render
 
 ### Scenario
 Management wants to understand email traffic patterns and identify unusual spikes in activity.
 
-### Your Mission
+### Your mission
 1. Create hourly email volume charts
 2. Compare inbound vs outbound patterns
 3. Identify peak hours for your organization
 
-### Skills Tested
+### Skills tested
 - `bin()` for time bucketing
 - `summarize` with multiple aggregations
 - `render` for visualization
 
 ```kusto
-// Try
-
-
-
-
-
-
-
-
-
+// Try it yourself
 ```
 
 [back to top](#kql-intermediate-series)
@@ -3166,34 +3504,37 @@ Management wants to understand email traffic patterns and identify unusual spike
 ---
 
 <a id="common-gotchas-tips" name="common-gotchas-tips"></a>
-## Common Gotchas & Tips
+## Common gotchas & tips
 
-### 1. Join Performance - Filter Before Joining
+### Join performance: filter before joining
 - Always filter tables with `where` BEFORE joining
-- Joining large tables without filtering is slow and may timeout
+- Joining large tables without filtering is slow and may time out
 
-### 2. Dynamic Arrays
-- `make_set()` returns a dynamic array - use `mv-expand` to flatten
+### Dynamic arrays
+- `make_set()` returns a dynamic array — use `mv-expand` to flatten
 - `has_any()` works with dynamic arrays directly
 
 **Example**
 
-```kusto
+<pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
 Subject has_any ("invoice", "payment")
 
 let keywords = dynamic(["invoice", "payment"]);
 EmailEvents
 | where Subject has_any (keywords)
-```
+</pre>
 
-### 3. Join Types Matter
-- `inner` - only matching rows from both tables
-- `leftouter` - all from left, matching from right (nulls if no match)
-- `leftanti` - rows from left with NO match in right (great for finding gaps)
+### Join types matter
+- `inner` — only matching rows from both tables
+- `leftouter` — all from left, matching from right (nulls if no match)
+- `leftsemi` — left rows that have a match in the right table; no right columns added
+- `leftanti` — rows from left with no match in right (great for finding gaps)
 
-### 4. Empty vs Null
-- `isempty()` checks for empty strings
-- `isnull()` checks for null values
+### Empty vs null
+- `isempty()` returns true for empty strings and null
+- `isnull()` checks for null only
 - Use `isnotempty()` to filter out both empty and null
 
 [back to top](#kql-intermediate-series)
+
+---
