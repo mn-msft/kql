@@ -110,16 +110,6 @@ EmailEvents                          // Query the EmailEvents table
 ```
 
 ```kusto
-// Count unique users by application
-CloudAppEvents                                  // Query cloud application activity events
-| where Timestamp > ago(7d)                     // Limit to events from the last 7 days
-| summarize                                     // Aggregate by application
-    UniqueUsers = dcount(AccountDisplayName)    // Count unique users per application
-    by Application                              // One row per application
-| top 10 by UniqueUsers
-```
-
-```kusto
 // Count attachments by file extension
 EmailAttachmentInfo                  // Query email attachment metadata
 | where Timestamp > ago(7d)          // Limit to attachments from the last 7 days
@@ -134,7 +124,7 @@ EmailAttachmentInfo                  // Query email attachment metadata
 ```kusto
 // Largest attachment senders (files > 5 MB, last 14 days)
 EmailAttachmentInfo                                             // Query email attachment metadata
-| where Timestamp > ago(14d)                                    // Limit to attachments from the last 14 days
+| where Timestamp > ago(7d)                                    // Limit to attachments from the last 14 days
 | where FileSize > 5000000                                      // Only include attachments larger than 5 MB
 | summarize                                                     // Aggregate by sender
     TotalSizeBytes = sum(FileSize),                             // Total attachment size sent (bytes)
@@ -163,7 +153,7 @@ EmailEvents                                         // Query the EmailEvents tab
 ```kusto
 // avg() - average file size by extension
 EmailAttachmentInfo                             // Query email attachment metadata
-| where Timestamp > ago(7d)                     // Limit to attachments from the last 7 days
+| where Timestamp > ago(14d)                     // Limit to attachments from the last 7 days
 | summarize                                     // Aggregate size statistics by file extension
     AvgSize = round(avg(FileSize), 3),          // Average attachment size (bytes)
     MinSize = min(FileSize),                    // Smallest attachment size
@@ -268,7 +258,7 @@ EmailAttachmentInfo
 // EmailEvents
 // | count 
 EmailEvents
-| summarize count()
+| summarize Count = count()
 ```
 
 ```kusto
@@ -374,7 +364,7 @@ IdentityLogonEvents                                         // Query identity lo
 ```kusto
 // Count high vs medium vs low alerts in a single pass
 AlertInfo
-| where Timestamp > ago(7d)
+// | where Timestamp > ago(7d)
 | summarize
     HighCount   = countif(Severity == "High"),
     MediumCount = countif(Severity == "Medium"),
@@ -614,10 +604,21 @@ EmailEvents                                         // Query the EmailEvents tab
 ```
 
 ```kusto
+CloudAppEvents
+| distinct Application, ActionType
+```
+
+```kusto
 CloudAppEvents                              // Query cloud application activity events
 | summarize                                 // Aggregate by application
     ActionTypes = make_set(ActionType)      // Collect unique action types per application
     by Application                          // One row per application
+```
+
+```kusto
+CloudAppEvents
+| where ActionType == "TabAdded"
+| sample 5
 ```
 
 ```kusto
@@ -836,7 +837,7 @@ CloudAppEvents                                       // Query cloud application 
 | summarize                                          // Aggregate by user and app
     ActionsBag = make_bag(ActionMapping)             // Merge into single JSON object
     by AccountDisplayName, Application               // One row per user per app
-| take 10
+| sample 10
 ```
 
 ```kusto
@@ -854,7 +855,7 @@ EmailPostDeliveryEvents                              // Query post-delivery even
 | summarize                                          // Aggregate by message and recipient
     ActionsBag = make_bag(ActionMapping)             // Merge into single JSON object
     by NetworkMessageId, RecipientEmailAddress       // One row per message per recipient
-| take 10
+| sample 10
 ```
 
 ```kusto
@@ -896,21 +897,6 @@ UrlClickEvents
 | summarize
     ClickBag = make_bag(ClickDetail)
     by AccountUpn
-```
-
-```kusto
-EmailEvents
-| summarize RecipientCount = count() by 
-    SenderFromAddress, 
-    RecipientEmailAddress
-| summarize RecipientsAndCount = make_bag(
-    bag_pack(
-        RecipientEmailAddress, 
-        RecipientCount
-        )
-    ) by 
-        SenderFromAddress
-| take 20
 ```
 
 > `bag_pack()` builds a named JSON object from field values. `make_bag()` aggregates those objects across multiple rows into one combined JSON object. They are typically used together: `bag_pack()` per row, then `make_bag()` in a `summarize`.
@@ -1035,6 +1021,7 @@ EntraIdSignInEvents
 ### arg_max()
 
 - Returns the row with the maximum value of a column — use for the latest or most recent record per group.
+- Another way to view it: *"Give me the record associated with the max value."*
 
 **How `arg_max()` works**
 
@@ -1061,6 +1048,8 @@ After: Latest sign-in per user
 │ bob@co      │ 2024-01-15 16:45    │ Teams       │
 └─────────────┴─────────────────────┴─────────────┘
 </pre>
+
+`arg_max(Timestamp,*)` mentally translates to: *"Give me the latest row"*
 
 **Examples**
 
@@ -1132,6 +1121,7 @@ UrlClickEvents
 ### arg_min()
 
 - Returns the row with the minimum value — use for the earliest or first record per group.
+- Another way to view it: *"Give me the record associated with the min value."*
 
 **How `arg_min()` works**
 
@@ -1158,6 +1148,8 @@ After: First sign-in per user
 │ bob@co      │ 2024-01-15 08:00    │ Outlook     │
 └─────────────┴─────────────────────┴─────────────┘
 </pre>
+
+`arg_min(Timestamp,*)` mentally translates to: *"Give me the earliest row"*
 
 **Examples**
 
@@ -1218,14 +1210,13 @@ UrlClickEvents
 | | `arg_max()` / `arg_min()` | `take_any()` |
 |---|---|---|
 | Selection criteria | Most or least recent row by key column | Any row (arbitrary) |
-| Cost | Higher — requires ordering within group | Lower — stops at first non-null value |
+| Cost | Higher — requires ordering within group | Lower |
 | Use when | You need the specific row with the highest or lowest value | You need any sample value per group |
 
 **Examples**
 
 ```kusto
 // take_any() — one sample subject line per sender (arbitrary, not latest)
-// Use when you want a representative email per sender without the arg_max() overhead
 EmailEvents
 | where Timestamp > ago(7d)
 | summarize
@@ -1238,7 +1229,6 @@ EmailEvents
 
 ```kusto
 // take_any() — get a display name for each user in sign-in failures
-// AccountDisplayName varies per event; take_any() avoids the arg_max() overhead
 EntraIdSignInEvents
 | where Timestamp > ago(7d)
 | where ErrorCode != 0
@@ -1395,8 +1385,7 @@ EmailEvents
     WithAttachments = countif(AttachmentCount > 0)
     by bin(Timestamp, 1h)
 | render columnchart with (
-    title='Hourly email volume',
-    ysplit=axes
+    title='Hourly email volume'
 )
 ```
 
@@ -1404,24 +1393,11 @@ EmailEvents
 // Inbound vs outbound email volume — timechart with separate panels per series
 // ysplit=panels renders each series in its own horizontal panel
 EmailEvents
-| where Timestamp > ago(7d)
+| where Timestamp > ago(3d)
 | where EmailDirection != "Unknown"
 | summarize Count = count() by bin(Timestamp, 1h), EmailDirection
 | render timechart with (
-    title='Email volume by direction',
-    ysplit=panels
-)
-```
-
-```kusto
-// Email delivery outcomes by direction — stacked barchart
-// kind=stacked requires two group-by dimensions: one for x-axis, one for the stack series
-EmailEvents
-| where Timestamp > ago(7d)
-| summarize Count = count() by EmailDirection, DeliveryLocation
-| render barchart with (
-    kind=stacked,
-    title='Delivery outcomes by email direction'
+    title='Email volume by direction'
 )
 ```
 
@@ -1452,43 +1428,10 @@ EntraIdSignInEvents
 ```kusto
 // URL click action breakdown — piechart with title
 UrlClickEvents
-| where Timestamp > ago(7d)
+// | where Timestamp > ago(7d)
 | summarize Count = count() by ActionType
 | render piechart with (
     title='URL click outcomes'
-)
-```
-
-```kusto
-// Sender volume vs attachment rate — scatterchart with axis labels
-// x-axis: total emails per sender domain, y-axis: % with attachments
-EmailEvents
-| where Timestamp > ago(7d)
-| summarize
-    TotalEmails     = count(),
-    WithAttachments = countif(AttachmentCount > 0)
-    by SenderFromDomain
-| extend AttachmentRate = round(100.0 * WithAttachments / TotalEmails, 1)
-| where TotalEmails > 10
-| render scatterchart with (
-    title='Sender volume vs attachment rate',
-    xtitle='Total emails',
-    ytitle='Attachment rate (%)',
-    legend=hidden
-)
-```
-
-```kusto
-// Anomaly chart — requires make-series and series_decompose_anomalies() (covered in L3)
-// anomalycolumns points to the column with the anomaly flag array
-// ad_flag: +1 = spike above baseline, -1 = dip, 0 = normal
-EmailEvents
-| where Timestamp > ago(14d)
-| make-series EmailCount = count() on Timestamp step 1h
-| extend (ad_flag, ad_score, baseline) = series_decompose_anomalies(EmailCount)
-| render anomalychart with (
-    anomalycolumns=ad_flag,
-    title='Email volume anomalies — last 14 days'
 )
 ```
 
@@ -1529,10 +1472,10 @@ datetime_diff('minute', ClickTime, EmailTime)
 ```kusto
 // Calculate time from email to URL click
 EmailEvents                                          // Query email events
-| where Timestamp > ago(7d)                          // Rolling 7-day window
+// | where Timestamp > ago(7d)                          // Rolling 7-day window
 | join kind=inner (                                  // Join with URL clicks
     UrlClickEvents
-    | where Timestamp > ago(7d)                      // Same rolling window
+    // | where Timestamp > ago(7d)                      // Same rolling window
     | project                                        // Select click fields
         NetworkMessageId,
         ClickTime = Timestamp,
@@ -1541,38 +1484,15 @@ EmailEvents                                          // Query email events
     )
     on NetworkMessageId                              // Join on message ID
 | extend                                             // Calculate time difference
-    MinutesToClick = datetime_diff('minute', ClickTime, Timestamp)
+    SecondsToClick = datetime_diff('second', ClickTime, Timestamp)
 | project                                            // Select output columns
     EmailTime = Timestamp,
     ClickTime,
-    MinutesToClick,
+    SecondsToClick,
     Subject,
     AccountUpn
-| sort by MinutesToClick asc                         // Fastest clicks first
-| take 20                                            // Top 20
-```
-
-```kusto
-// Analyze email age in mailbox
-EmailEvents                                          // Query email events
-| where Timestamp > ago(30d)                         // Limit to last 30 days
-| extend                                             // Calculate days since received
-    DaysInMailbox = datetime_diff('day', now(), Timestamp)
-| summarize                                          // Count emails per exclusive age window
-    Last24Hours = countif(DaysInMailbox <= 1),
-    Days2to7    = countif(DaysInMailbox > 1 and DaysInMailbox <= 7),
-    Days8to30   = countif(DaysInMailbox > 7 and DaysInMailbox <= 30)
-    by DeliveryLocation                              // Group by location
-```
-
-```kusto
-// Find users with many logins in a single minute — possible session anomaly or password spray
-// Counts logins per user per minute; five or more in one minute is unusual
-IdentityLogonEvents
-| where Timestamp > ago(1d)
-| summarize LoginCount = count() by AccountUpn, bin(Timestamp, 1m)
-| where LoginCount > 5                               // More than 5 logins in a single minute
-| sort by LoginCount desc
+| sort by SecondsToClick asc                         // Fastest clicks first
+// | take 20                                            // Top 20
 ```
 
 ```kusto
@@ -1662,15 +1582,13 @@ let failedLogons =                              // Define a reusable subquery fo
     | where ActionType == "LogonFailed";        // Filter to failed logon attempts only
 failedLogons                                    // Reference the failedLogons subquery
 | summarize                                     // Aggregate failed logons by application
-    count()                                     // Count failed sign-in events per application
-    by Application                              // One row per application
+    Count = count() by Application              // Count failed sign-in events per application
 ```
 
 **datatable — define an inline reference table**
 
-`datatable(Column:type, ...) [value1, value2, ...]` creates an in-memory table from literal values.
-Use it with `let` to define static reference data — severity maps, error code descriptions,
-IOC lists — without needing an external file or a persistent table.
+`datatable(Column:type, ...) [value1, value2, ...]` creates an in-memory table from literal values.  
+Use it with `let` to define static reference data — severity maps, error code descriptions, IOC lists — without needing an external file or a persistent table.
 
 The example below creates a small user and order dataset to demonstrate join and lookup patterns.
 
@@ -1739,49 +1657,117 @@ EntraIdSignInEvents
 <a id="type-conversion" name="type-conversion"></a>
 ## Type conversion functions
 
-Values extracted from dynamic columns (e.g. via `parse_json()`) have no fixed type. Cast them to the correct type before filtering, comparing, or joining.
+KQL is a typed language — type mismatches produce silent failures or null results rather than errors. Explicit casting is needed any time a value's type doesn't match what the next operation expects.
+
+Common situations:
+- Dynamic column access — values from `parse_json()` or `AdditionalFields` have no fixed type
+- Array element access — `split()` results and `[]` indexing return `dynamic` values
+- Arithmetic precision — `tolong()` before division prevents integer truncation
+- Join key alignment — when the same field has different types across tables
 
 | Function | Converts to |
 |---|---|
-| `tostring(v)` | String |
-| `toint(v)` | Integer |
-| `tolong(v)` | Large integer — use for counts, file sizes, and numeric timestamps |
-| `todouble(v)` | Decimal number |
-| `tobool(v)` | Boolean |
-| `todatetime(v)` | Datetime |
-| `totimespan(v)` | Timespan |
+| `tostring()` | String |
+| `toint()` | Integer |
+| `tolong()` | Large integer — use for counts, file sizes, and numeric timestamps |
+| `todouble()` | Decimal number |
+| `tobool()` | Boolean |
+| `todatetime()` | Datetime |
+| `totimespan()` | Timespan |
 
 All functions return `null` (not an error) when the value cannot be converted.
 
 **Examples**
 
 ```kusto
-// Cast fields from parse_json() to the correct scalar types before use
-// Without tostring() / tolong(), filters and comparisons on dynamic fields may silently fail
 CloudAppEvents
 | where Timestamp > ago(7d)
-| where ActionType == "FileDownloaded"
-| extend Data     = parse_json(RawEventData)
-| extend FileName = tostring(Data.SourceFileName)
-| extend SizeMB   = tolong(Data.FileSize) / 1048576.0
-| where SizeMB > 10
-| project Timestamp, AccountDisplayName, FileName, SizeMB
-| take 20
+| where ActionType contains "FileUploaded"
+| take 10
 ```
 
 ```kusto
-// Cast multiple types from AdditionalFields in AlertEvidence
-// AdditionalFields schema varies by EntityType — cast each field defensively
-AlertEvidence
-| where Timestamp > ago(7d)
-| where EntityType == "Process"
-| extend Fields      = parse_json(AdditionalFields)
-| extend ProcessName = tostring(Fields.ProcessName)
-| extend ProcessId   = toint(Fields.ProcessId)
-| extend ParentPid   = toint(Fields.InitiatingProcessId)
-| where isnotempty(ProcessName)
-| project Timestamp, AlertId, ProcessName, ProcessId, ParentPid
-| take 20
+CloudAppEvents
+| where TimeGenerated >= ago(2h)
+| where Application in (
+    "Microsoft SharePoint Online",
+    "Microsoft OneDrive for Business"
+    )
+| where ActionType in~ (
+    "CompanyLinkCreated",
+    "CompanyLinkUpdated",
+    "SharingLinkCreated",
+    "SharingLinkUpdated",
+    "AnonymousLinkCreated",
+    "AnonymousLinkUpdated",
+    "SecureLinkCreated",
+    "SecureLinkUpdated",
+    "SharingSet",
+    "AddedToSharingLink",
+    "AddedToSecureLink"
+    )
+| extend Raw = parse_json(RawEventData)
+| extend
+    ShareObjectId              = tostring(Raw.ObjectId),
+    ShareUserId                = tostring(Raw.UserId),
+    SharePermission            = tostring(Raw.Permission),
+    ShareSharingLinkScope      = tostring(Raw.SharingLinkScope),
+    ShareEV                    = tostring(Raw.EventData),
+    ShareTargetUserOrGroupName = tostring(Raw.TargetUserOrGroupName),
+    ShareTargetUserOrGroupType = tostring(Raw.TargetUserOrGroupType),
+    ShareItemType              = tostring(Raw.ItemType)
+| where isnotempty(ShareObjectId)
+| project
+    ShareTime                  = TimeGenerated,
+    ShareAction                = ActionType,
+    ShareObjectId,
+    ShareItemType,
+    ShareUserId,
+    SharePermission,
+    ShareSharingLinkScope,
+    ShareEV,
+    ShareTargetUserOrGroupName,
+    ShareTargetUserOrGroupType,
+    RawEventData,
+    Application
+```
+
+```kusto
+CloudAppEvents
+| where TimeGenerated >= ago(90d)
+| where Application in (
+    "Microsoft SharePoint Online",
+    "Microsoft OneDrive for Business"
+    )
+| where ActionType =~ "DLPRuleMatch"
+| where isnotempty(ObjectName)
+| extend ObjectName = url_decode(ObjectName)
+| extend Raw = parse_json(RawEventData)
+| extend
+    RawIncidentId       = tostring(Raw.IncidentId),
+    RawUserId           = tostring(Raw.UserId),
+    RawCreationTime     = todatetime(Raw.SharePointMetaData.ItemCreationTime),
+    RawLastModifiedTime = todatetime(Raw.SharePointMetaData.ItemLastModifiedTime)
+| mv-expand Policy = Raw.PolicyDetails
+| extend
+    RawPolicyId   = tostring(Policy.PolicyId),
+    RawPolicyName = tostring(Policy.PolicyName)
+| mv-expand Rule = Policy.Rules
+| extend
+    RawRuleId   = tostring(Rule.RuleId),
+    RawRuleName = tostring(Rule.RuleName)
+| project
+    DLPTime         = TimeGenerated,
+    DLPAction       = ActionType,
+    ObjectName,
+    DLPUserId       = RawUserId,
+    DLPIncidentId   = RawIncidentId,
+    DLPPolicyId     = RawPolicyId,
+    DLPPolicyName   = RawPolicyName,
+    DLPRuleId       = RawRuleId,
+    DLPRuleName     = RawRuleName,
+    RawEventData,
+    Application
 ```
 
 [back to top](#kql-intermediate-series)
@@ -1910,6 +1896,29 @@ EmailEvents                                          // Query the EmailEvents ta
 ```
 
 ```kusto
+EmailEvents
+| project
+    NetworkMessageId,
+    EmailDetails = bag_pack(
+        "Sender", SenderFromAddress,
+        "Recipient", RecipientEmailAddress,
+        "Subject", Subject
+    )
+| sample 5
+```
+
+```kusto
+EmailEvents
+| extend RecipientBag = bag_pack(
+    RecipientEmailAddress,
+    DeliveryLocation
+)
+| summarize make_bag(RecipientBag)
+    by NetworkMessageId
+| sample 5
+```
+
+```kusto
 // Create a JSON object with logon event details
 IdentityLogonEvents                                  // Query identity logon events
 | take 5                                             // Limit to 5 rows for demo
@@ -2006,8 +2015,6 @@ UrlClickEvents
 ### inner join
 Returns only rows where the key exists in **both** tables.
 
-![alt text](https://learn.microsoft.com/en-us/kusto/query/media/joinoperator/join-inner.png?view=microsoft-fabric)
-
 **Before**
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
@@ -2076,8 +2083,6 @@ Users                                                       // Start with Users 
 
 ### leftouter join
 Returns **all rows from the left** table, with nulls where no match exists on the right.
-
-![alt text](https://learn.microsoft.com/en-us/kusto/query/media/joinoperator/join-leftouter.png?view=microsoft-fabric)
 
 **Before**
 
@@ -2153,8 +2158,6 @@ Users                                                           // Start with Us
 Returns **left rows that have a match** in the right table, but **no right columns** are added.
 Use this when you only want to filter the left table.
 
-![alt text](https://learn.microsoft.com/en-us/kusto/query/media/joinoperator/join-leftsemi.png?view=microsoft-fabric)
-
 **Before**
 
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
@@ -2223,7 +2226,6 @@ Users                                                           // Start with Us
 ### leftanti join
 Returns **left rows that have no match** in the right table. Useful for finding rows with no match.
 
-![alt text](https://learn.microsoft.com/en-us/kusto/query/media/joinoperator/join-leftanti.png?view=microsoft-fabric)
 
 **Before**
 
