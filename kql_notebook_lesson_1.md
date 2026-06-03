@@ -110,6 +110,12 @@ CloudAppEvents | getschema
 ```
 
 ```kusto
+CloudAppEvents
+| where Timestamp > ago (1d)
+| sample 5
+```
+
+```kusto
 EmailAttachmentInfo | getschema
 ```
 
@@ -220,7 +226,7 @@ print
 
 ```kusto
 // Show last 10 email events
-EmailEvents
+EmailEvents // this comment
 | take 10
 ```
 
@@ -266,8 +272,8 @@ EmailEvents
     SenderFromDomain,
     RecipientEmailAddress,
     Subject,
-    // AttachmentCount,  // toggle off: uncomment to include
-    // ThreatTypes,      // toggle off: uncomment to include
+    AttachmentCount,  // toggle off: uncomment to include
+    ThreatTypes,      // toggle off: uncomment to include
     EmailDirection
 | take 10
 ```
@@ -303,7 +309,7 @@ EmailEvents                               ← Start: All rows from table
 **Examples**
 
 ```kusto
-EmailEvents
+EmailEvents // 652k results
 // | where Timestamp > ago (7d)
 // | where EmailDirection == "Inbound"
 // | where SenderFromDomain has "gmail.com"
@@ -418,12 +424,22 @@ EmailPostDeliveryEvents
 
 ```kusto
 EmailEvents
+| where SenderFromDomain has "gmail" and DeliveryLocation has "Inbox"
+| project 
+    // Subject, 
+    RecipientEmailAddress, 
+    NetworkMessageId
+| take                                                                                                                                  5
+```
+
+```kusto
+EmailEvents
 | where
     SenderFromDomain has "gmail" 
     and DeliveryLocation has "Inbox"
 | project Subject,
     RecipientEmailAddress, NetworkMessageId
-| take                                                                                                                        5
+| take 5
 ```
 
 ```kusto
@@ -480,7 +496,7 @@ AlertInfo
 // Now we narrow to just Medium severity rows — but only from the 7-day window we already scoped.
 // The engine never touches older rows at all.
 AlertInfo
-| where Timestamp > ago(7d)
+// | where Timestamp > ago(7d)
 | where Severity == "Medium"
 ```
 
@@ -509,9 +525,9 @@ AlertInfo
 // sort and take are the most expensive per-row operations.
 // Running them on 20 rows is trivial. Running them on millions is not.
 AlertInfo
-| where Timestamp > ago(7d)
-| where Severity == "High"
-| where ServiceSource == "AAD Identity Protection"
+// | where Timestamp > ago(21d)
+// | where Severity == "High"
+// | where ServiceSource contains "Sentinel"
 | project Timestamp, Title, Category, ServiceSource
 | sort by Timestamp desc
 | take 20
@@ -576,7 +592,7 @@ EmailEvents
 // Step 5 — extend adds a derived column AFTER all row filtering
 // If it ran before the filters, it would compute on the entire table.
 EmailEvents
-| where Timestamp > ago(7d)
+| where Timestamp > ago(1d)
 | where EmailDirection == "Inbound"
 | where AttachmentCount > 0
 | extend AttachmentRisk = case(
@@ -590,7 +606,7 @@ EmailEvents
 // project selects only the columns we need — on the smallest possible row set.
 // sort runs last, on already-filtered, already-shaped output.
 EmailEvents
-| where Timestamp > ago(7d)
+| where Timestamp > ago(14d)
 | where EmailDirection == "Inbound"
 | where AttachmentCount > 0
 | extend AttachmentRisk = case(
@@ -731,7 +747,7 @@ search "facebook"
 ```kusto
 // Piped form — table first, then search
 // Equivalent to: search in (EmailEvents) "phish"
-EmailEvents
+EmailEvents // 53 columns
 | where Timestamp > ago(7d)
 | search "phish"
 | take 10
@@ -741,13 +757,13 @@ EmailEvents
 // Scoped to specific tables — cheaper than naked search
 search in (EmailEvents, CloudAppEvents) "user@contoso.com"
 | where Timestamp > ago(7d)
-| take 10
+// | take 10
 ```
 
 ```kusto
 // Column-scoped — targets one column instead of all columns
 // Significantly cheaper when you know where the value lives
-search in (EmailEvents) Subject:"invoice"
+search in (EmailEvents) Subject:"invoice" and SenderFromAddress:"gmail.com"
 | where Timestamp > ago(7d)
 | take 10
 ```
@@ -796,7 +812,7 @@ EmailEvents
 
 ```kusto
 EmailEvents
-| take 25
+| take 10
 ```
 
 ```kusto
@@ -887,7 +903,7 @@ IdentityLogonEvents
 ```kusto
 // Filter cloud events by action
 CloudAppEvents
-| where Timestamp > ago(7d)
+// | where Timestamp > ago(7d)
 | where ActionType has "SoftDelete"
 | take 10
 ```
@@ -931,9 +947,10 @@ EmailUrlInfo
 
 ```kusto
 UrlClickEvents
-| where Timestamp > ago(30d)
+// | where Timestamp > ago(14d)
 // | where ActionType == "ClickBlocked"
-// | project Timestamp, AccountUpn, Url, ActionType, ThreatTypes, Workload
+| project Timestamp, AccountUpn, Url, ActionType, ThreatTypes, Workload, IsClickedThrough
+| take 25
 ```
 
 ```kusto
@@ -946,10 +963,15 @@ UrlClickEvents
 
 ```kusto
 EmailPostDeliveryEvents
-| where Timestamp > ago(7d)
-| where ActionType has "ZAP"
+// | where Timestamp > ago(7d)
+// | where ActionType has "ZAP"
 | project Timestamp, NetworkMessageId, RecipientEmailAddress, ActionType, ActionTrigger, ActionResult, DeliveryLocation
-| take 20
+// | take 20
+```
+
+```kusto
+EmailPostDeliveryEvents
+| distinct ActionType
 ```
 
 ```kusto
@@ -1011,10 +1033,10 @@ IdentityLogonEvents
 
 | Expression | Result |
 |---|---|
-| `"gmail.com" == "gmail.com"` | `true` |
-| `"gmail.com" == "Gmail.com"` | `false` |
-| `"gmail.com" != "yahoo.com"` | `true` |
-| `"gmail.com" != "gmail.com"` | `false` |
+| "gmail.com" == "gmail.com" | true |
+| "gmail.com" == "Gmail.com" | false |
+| "gmail.com" != "yahoo.com" | true |
+| "gmail.com" != "gmail.com" | false |
 
 **Examples**
 
@@ -1064,7 +1086,7 @@ CloudAppEvents
 
 ```kusto
 CloudAppEvents
-| distinct ActionType
+| distinct Application, ActionType
 ```
 
 ```kusto
@@ -1165,10 +1187,14 @@ EmailAttachmentInfo
 ```kusto
 // Using 'in' for multiple values
 IdentityLogonEvents
-| where Timestamp > ago(7d)
-| where Application in ("Microsoft 365", "Microsoft SharePoint Online", "Microsoft OneDrive for Business")
+| where Timestamp between (datetime(2026-05-29) .. datetime(2026-05-30))
+| where Application in (
+    "Microsoft 365", 
+    "Microsoft SharePoint Online", 
+    "Microsoft OneDrive for Business"
+    )
 | distinct Application, AccountUpn
-| sample 3
+// | sample 3
 ```
 
 ```kusto
@@ -1182,10 +1208,16 @@ CloudAppEvents
 ```kusto
 // Equivalent using multiple where clauses — easier to toggle individual conditions
 CloudAppEvents
-| where Timestamp > ago(30d)
-| where Application == "Microsoft Exchange Online"
+| where Timestamp > ago(30d) // and
+| where Application == "Microsoft Exchange Online" // and
 | where ActionType has "MoveToDeletedItems"
 | take 10
+```
+
+```kusto
+CloudAppEvents
+| where Application == "Microsoft Teams"
+| distinct ActionType
 ```
 
 ```kusto
@@ -1250,10 +1282,10 @@ IdentityLogonEvents
 ```kusto
 // or — Teams messages with threats OR non-delivered
 MessageEvents
-| where Timestamp > ago(7d)
+// | where Timestamp > ago(7d)
 | where ThreatTypes != ""
     or DeliveryAction != "Delivered"
-| project Timestamp, TeamsMessageId, SenderEmailAddress, DeliveryAction, ThreatTypes
+// | project Timestamp, TeamsMessageId, SenderEmailAddress, DeliveryAction, ThreatTypes
 | take 20
 ```
 
@@ -1265,6 +1297,11 @@ EmailUrlInfo
     and UrlDomain !endswith "microsoft.com"
 | project Timestamp, NetworkMessageId, Url, UrlDomain
 | take 10
+```
+
+```kusto
+EmailUrlInfo
+| distinct UrlLocation
 ```
 
 ```kusto
@@ -1319,10 +1356,16 @@ EmailEvents
 ```
 
 ```kusto
+EmailEvents
+| where SenderFromDomain == ""
+```
+
+```kusto
 // in~ for case-insensitive list matching
 CloudAppEvents
+| where Timestamp > ago (7d)
 | where Application in~ ("MICROSOFT SHAREPOINT ONLINE", "microsoft onedrive for business", "microsoft Teams", "Microsoft EXCHANGE Online")
-| take 10
+| sample 20
 ```
 
 ```kusto
@@ -1561,8 +1604,8 @@ CloudAppEvents
 ```kusto
 // Unique sender domains
 EmailEvents
-| where Timestamp > ago(1d)
-| distinct SenderMailFromDomain
+| where Timestamp > ago(1h)
+| distinct SenderMailFromAddress, SenderFromAddress
 ```
 
 ```kusto
@@ -1685,7 +1728,7 @@ After: Newest first
 ```kusto
 // Most recent sign-ins first
 IdentityLogonEvents
-| sort by Timestamp desc
+| sort by Timestamp
 | take 10
 ```
 
@@ -1830,7 +1873,7 @@ AlertInfo
 
 ```kusto
 EmailEvents
-| where Timestamp > ago(7d)
+| where Timestamp > ago(1d)
 | summarize 
     EmailCount = count() 
     by SenderFromDomain
@@ -1839,7 +1882,7 @@ EmailEvents
 
 ```kusto
 EmailEvents
-| where Timestamp > ago(7d)
+// | where Timestamp > ago(7d)
 | where ThreatTypes has_any ("Phish", "Malware")
 | summarize
     ThreatEmailCount = count(), 
@@ -1952,7 +1995,13 @@ EmailAttachmentInfo
 ```kusto
 CloudAppEvents
 | where ActionType has "Create"
-| take 5
+| sample 10
+```
+
+```kusto
+CloudAppEvents
+| where ActionType contains "Create"
+| sample 10
 ```
 
 ### How `has` and `contains` work behind the scenes
@@ -2133,8 +2182,14 @@ EmailEvents
 
 ```kusto
 EmailEvents
-| where Timestamp > ago(7d)
+// | where Timestamp > ago(7d)
 | where Subject has_any ("invoice", "payment")
+```
+
+```kusto
+EmailUrlInfo
+// | where UrlLocation == "Body"
+| where Url contains "groupon.com"
 ```
 
 ```kusto
@@ -2833,7 +2888,7 @@ AlertInfo
 
 ### startofday() / startofweek() / startofmonth()
 
-Round a timestamp down to the start of its enclosing calendar period.
+Round a timestamp down to the start of its calendar period.
 Use these when you need to group by calendar boundaries rather than fixed-width buckets.
 
 | Function | Rounds down to |
@@ -2841,9 +2896,6 @@ Use these when you need to group by calendar boundaries rather than fixed-width 
 | `startofday(t)` | Start of the day (midnight UTC) |
 | `startofweek(t)` | Start of the week (Sunday midnight UTC) |
 | `startofmonth(t)` | First of the month (midnight UTC) |
-
-`bin(Timestamp, 1d)` and `startofday(Timestamp)` produce the same result — `startofday()` is explicit
-about intent, while `bin()` is more flexible when the interval is not a calendar unit.
 
 **Examples**
 
