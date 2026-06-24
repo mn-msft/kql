@@ -110,12 +110,6 @@ CloudAppEvents | getschema
 ```
 
 ```kusto
-CloudAppEvents
-| where Timestamp > ago (1d)
-| sample 5
-```
-
-```kusto
 EmailAttachmentInfo | getschema
 ```
 
@@ -309,7 +303,11 @@ EmailEvents                               ← Start: All rows from table
 **Examples**
 
 ```kusto
-EmailEvents // 652k results
+EmailEvents
+```
+
+```kusto
+EmailEvents // 778k results
 // | where Timestamp > ago (7d)
 // | where EmailDirection == "Inbound"
 // | where SenderFromDomain has "gmail.com"
@@ -318,23 +316,23 @@ EmailEvents // 652k results
 
 ```kusto
 EmailEvents
-| where Timestamp > ago (7d)
+| where Timestamp > ago (5d)
 // | where EmailDirection == "Inbound"
 // | where SenderFromDomain has "gmail.com"
 // | take 10
 ```
 
 ```kusto
-EmailEvents
-| where Timestamp > ago (7d)
-| where EmailDirection == "Inbound"
+EmailEvents // starts with 778k
+| where Timestamp > ago (5d) // prunes it to 12k
+| where EmailDirection == "Inbound" // prunes it 7k
 // | where SenderFromDomain has "gmail.com"
 // | take 10
 ```
 
 ```kusto
 EmailEvents
-| where Timestamp > ago (7d)
+| where Timestamp > ago (5d)
 | where EmailDirection == "Inbound"
 | where SenderFromDomain has "gmail.com"
 // | take 10
@@ -357,8 +355,9 @@ IdentityLogonEvents
 
 ```kusto
 CloudAppEvents
-| where ActionType == "FileDownloaded"
-| project Timestamp, AccountDisplayName, ActionType, Application
+| where Timestamp > ago(7d)
+| where ActionType == "SoftDelete"
+| project Timestamp, AccountDisplayName, ActionType, Application, RawEventData
 | take 5
 ```
 
@@ -397,7 +396,7 @@ EmailUrlInfo
 ```kusto
 // UrlClickEvents — blocked clicks piped to clean output
 UrlClickEvents
-| where Timestamp > ago(7d)
+// | where Timestamp > ago(7d)
 | where ActionType == "ClickBlocked"
 | project Timestamp, AccountUpn, Url, IsClickedThrough
 ```
@@ -427,7 +426,7 @@ EmailEvents
 | where SenderFromDomain has "gmail" and DeliveryLocation has "Inbox"
 | project 
     // Subject, 
-    RecipientEmailAddress, 
+                                            RecipientEmailAddress, 
     NetworkMessageId
 | take                                                                                                                                  5
 ```
@@ -437,8 +436,10 @@ EmailEvents
 | where
     SenderFromDomain has "gmail" 
     and DeliveryLocation has "Inbox"
-| project Subject,
-    RecipientEmailAddress, NetworkMessageId
+| project 
+    // Subject, 
+    RecipientEmailAddress, 
+    NetworkMessageId
 | take 5
 ```
 
@@ -488,7 +489,7 @@ AlertInfo
 // Timestamp is indexed. This one filter can eliminate millions of rows before anything else runs.
 // Always your first where clause.
 AlertInfo
-| where Timestamp > ago(7d)
+| where Timestamp > ago(14d)
 ```
 
 ```kusto
@@ -551,6 +552,20 @@ Filtering late is the most common mistake. KQL efficiency is about rows — the 
 In the inefficient version, the `where` clauses run against every row in the table — nothing has been filtered yet.  
 In the efficient version, the time filter runs first and eliminates the vast majority of rows, so `project` and every other stage only touches what survived.
 
+```kusto
+AlertInfo
+| project Timestamp, Title, Severity
+| where Timestamp > ago (7d)
+| where Severity == "Medium"
+```
+
+```kusto
+AlertInfo
+| where Timestamp > ago (7d)
+| where Severity == "Medium"
+| project Timestamp, Title, Severity
+```
+
 ---
 
 **Scenario 2: finding inbound emails with attachments from external senders**
@@ -566,7 +581,7 @@ EmailEvents
 // The Timestamp index makes this the cheapest possible filter.
 // Everything outside 7 days is gone before any other work happens.
 EmailEvents
-| where Timestamp > ago(7d)
+| where Timestamp > ago(5d)
 ```
 
 ```kusto
@@ -574,8 +589,8 @@ EmailEvents
 // "Inbound" likely cuts the dataset roughly in half.
 // Still just a row filter — no shaping yet.
 EmailEvents
-| where Timestamp > ago(7d)
-| where EmailDirection == "Inbound"
+| where Timestamp > ago(5d)
+| where EmailDirection == "Inbound" // this omits intra-org and outbound
 ```
 
 ```kusto
@@ -583,7 +598,7 @@ EmailEvents
 // AttachmentCount > 0 eliminates the majority of inbound email.
 // We're now working with a much smaller set before doing anything expensive.
 EmailEvents
-| where Timestamp > ago(7d)
+| where Timestamp > ago(5d)
 | where EmailDirection == "Inbound"
 | where AttachmentCount > 0
 ```
@@ -592,7 +607,7 @@ EmailEvents
 // Step 5 — extend adds a derived column AFTER all row filtering
 // If it ran before the filters, it would compute on the entire table.
 EmailEvents
-| where Timestamp > ago(1d)
+| where Timestamp > ago(5d)
 | where EmailDirection == "Inbound"
 | where AttachmentCount > 0
 | extend AttachmentRisk = case(
@@ -606,12 +621,12 @@ EmailEvents
 // project selects only the columns we need — on the smallest possible row set.
 // sort runs last, on already-filtered, already-shaped output.
 EmailEvents
-| where Timestamp > ago(14d)
+| where Timestamp > ago(1d)
 | where EmailDirection == "Inbound"
 | where AttachmentCount > 0
 | extend AttachmentRisk = case(
-    AttachmentCount > 5, "High",
-    AttachmentCount > 1, "Medium",
+    AttachmentCount > 10, "High",
+    AttachmentCount > 5, "Medium",
     "Low")
 | project Timestamp, AttachmentRisk, RecipientEmailAddress, Subject, AttachmentCount
 | sort by Timestamp desc
@@ -741,21 +756,21 @@ AlertInfo
 ```kusto
 // Searches ALL tables — extremely broad and expensive
 // Only use when you have no idea where the data lives
-search "facebook"
+search "brick123"
 ```
 
 ```kusto
 // Piped form — table first, then search
 // Equivalent to: search in (EmailEvents) "phish"
 EmailEvents // 53 columns
-| where Timestamp > ago(7d)
+// | where Timestamp > ago(7d)
 | search "phish"
 | take 10
 ```
 
 ```kusto
 // Scoped to specific tables — cheaper than naked search
-search in (EmailEvents, CloudAppEvents) "user@contoso.com"
+search in (EmailEvents, CloudAppEvents) "mike.taylor@contoso.com"
 | where Timestamp > ago(7d)
 // | take 10
 ```
@@ -812,12 +827,12 @@ EmailEvents
 
 ```kusto
 EmailEvents
-| take 10
+| sample 10
 ```
 
 ```kusto
 // Sample gives random rows - great for exploring data variety
-CloudAppEvents | sample 20
+CloudAppEvents | sample 5
 ```
 
 ```kusto
@@ -825,11 +840,18 @@ EmailAttachmentInfo | take 10
 ```
 
 ```kusto
+EmailAttachmentInfo | sample 10
+```
+
+```kusto
 EmailUrlInfo | take 10
 ```
 
 ```kusto
-UrlClickEvents | take 10
+UrlClickEvents 
+| where Timestamp > ago (7d)
+| project Timestamp, Url, ActionType, IsClickedThrough, ThreatTypes, AccountUpn, Workload
+| sample 10
 ```
 
 ```kusto
@@ -897,29 +919,33 @@ EmailEvents
 IdentityLogonEvents
 | where Timestamp > ago(1d)
 | where ActionType == "LogonFailed"
-| take 10
+| sample 10
+```
+
+```kusto
+Search-UnifiedAuditLog 
 ```
 
 ```kusto
 // Filter cloud events by action
 CloudAppEvents
-// | where Timestamp > ago(7d)
-| where ActionType has "SoftDelete"
-| take 10
+| where Timestamp > ago(7d)
+| where ActionType has "HardDelete"
+| sample 10
 ```
 
 ```kusto
 CloudAppEvents
-| distinct Application
+| distinct Application, ActionType
 ```
 
 ```kusto
 // Find attachments with specific threat detections
 EmailAttachmentInfo
-| where Timestamp >= ago(1d)
+| where Timestamp >= ago(7d)
 | where isnotempty(ThreatTypes)
 | project Timestamp, SenderFromAddress, RecipientEmailAddress, FileName, FileType, ThreatTypes, ThreatNames
-| take 20
+// | take 20
 ```
 
 ```kusto
@@ -956,15 +982,15 @@ UrlClickEvents
 ```kusto
 UrlClickEvents
 | where Timestamp > ago(30d)
-// | where IsClickedThrough == true
+| where IsClickedThrough == true
 | project Timestamp, AccountUpn, Url, ThreatTypes, Workload
 | take 20
 ```
 
 ```kusto
 EmailPostDeliveryEvents
-// | where Timestamp > ago(7d)
-// | where ActionType has "ZAP"
+| where Timestamp > ago(7d)
+| where ActionType has "ZAP"
 | project Timestamp, NetworkMessageId, RecipientEmailAddress, ActionType, ActionTrigger, ActionResult, DeliveryLocation
 // | take 20
 ```
@@ -1043,8 +1069,14 @@ IdentityLogonEvents
 ```kusto
 // exact match — only rows where EmailDirection is exactly "Inbound"
 EmailEvents
-| where EmailDirection == "Inbound"
-| take 10
+| where Timestamp > ago (7d)
+| where EmailDirection == "Intra-org"
+| count
+```
+
+```kusto
+EmailEvents
+| distinct EmailDirection
 ```
 
 ```kusto
@@ -1075,7 +1107,7 @@ CloudAppEvents
 | where Timestamp > ago(7d)
 | where Application == "Microsoft OneDrive for Business"
 | where ActionType == "FileUploaded"
-| project Timestamp, AccountDisplayName, ActionType, Application
+| project Timestamp, AccountDisplayName, ActionType, Application, ObjectId, ObjectName
 | take 10
 ```
 
@@ -1135,6 +1167,11 @@ AlertEvidence
 ```
 
 ```kusto
+EmailUrlInfo
+| distinct UrlLocation
+```
+
+```kusto
 // only URLs embedded in the email body
 EmailUrlInfo
 | where Timestamp > ago(7d)
@@ -1158,7 +1195,17 @@ EmailPostDeliveryEvents
 | where Timestamp > ago(7d)
 | where ActionType != "Manual Remediation"
 | project Timestamp, NetworkMessageId, ActionType, DeliveryLocation
-| take 10
+| sample 10
+```
+
+```kusto
+EmailEvents
+| where NetworkMessageId == "be65f1c4-68e9-484c-73ed-08dec25bf876"
+```
+
+```kusto
+EmailPostDeliveryEvents
+| distinct ActionType
 ```
 
 ```kusto
@@ -1187,13 +1234,13 @@ EmailAttachmentInfo
 ```kusto
 // Using 'in' for multiple values
 IdentityLogonEvents
-| where Timestamp between (datetime(2026-05-29) .. datetime(2026-05-30))
+| where Timestamp between (datetime(2026-04-29) .. datetime(2026-05-30))
 | where Application in (
     "Microsoft 365", 
     "Microsoft SharePoint Online", 
     "Microsoft OneDrive for Business"
     )
-| distinct Application, AccountUpn
+| distinct Application
 // | sample 3
 ```
 
@@ -1290,6 +1337,16 @@ MessageEvents
 ```
 
 ```kusto
+MessagePostDeliveryEvents
+```
+
+```kusto
+MessageUrlInfo
+| where Timestamp > ago (7d)
+| distinct Url
+```
+
+```kusto
 // and — URLs in body AND from external senders
 EmailUrlInfo
 | where Timestamp > ago(7d)
@@ -1308,7 +1365,10 @@ EmailUrlInfo
 // in — multiple click action types
 UrlClickEvents
 | where Timestamp > ago(7d)
-| where ActionType in ("ClickBlocked", "ClickAllowed")
+| where ActionType in (
+    "ClickBlocked", 
+    "ClickAllowed"
+    )
 | project Timestamp, AccountUpn, Url, ActionType, IsClickedThrough
 | take 10
 ```
@@ -1371,7 +1431,7 @@ CloudAppEvents
 ```kusto
 // Case-insensitive alert title match
 AlertInfo
-| where Timestamp > ago(7d)
+// | where Timestamp > ago(7d)
 | where Title =~ "suspicious sign-in activity"
 | project Timestamp, Title, Severity, ServiceSource
 | take 10
@@ -1506,7 +1566,7 @@ IdentityLogonEvents
 ```kusto
 // Select and rename attachment columns
 EmailAttachmentInfo
-| where Timestamp > ago(7d)
+| where Timestamp > ago(1d)
 | project
     ReceivedTime = Timestamp,
     Sender       = SenderFromAddress,
@@ -1604,8 +1664,10 @@ CloudAppEvents
 ```kusto
 // Unique sender domains
 EmailEvents
-| where Timestamp > ago(1h)
-| distinct SenderMailFromAddress, SenderFromAddress
+| where Timestamp > ago(14d)
+| where SenderFromDomain != "contoso.com"
+| where RecipientEmailAddress == "user@contoso.com"
+| distinct SenderFromAddress, SenderMailFromAddress
 ```
 
 ```kusto
@@ -1618,7 +1680,7 @@ CloudAppEvents
 ```kusto
 // Unique file types in attachments
 EmailAttachmentInfo
-| where Timestamp > ago(30d)
+| where Timestamp > ago(7d)
 | distinct FileExtension
 ```
 
@@ -1737,7 +1799,7 @@ IdentityLogonEvents
 // Only the last | sort by applies. To sort by multiple columns use: | sort by col1 asc, col2 desc
 CloudAppEvents
 | where Timestamp > ago(1d)
-| sort by AccountDisplayName asc
+| sort by AccountDisplayName asc // ignored
 | sort by Timestamp desc
 | take 20
 ```
@@ -1767,7 +1829,7 @@ EmailAttachmentInfo
     FileSizeMB = round(FileSize / 1024.0 / 1024.0, 2)
 | project FileName, FileSize, FileSizeKB, FileSizeMB
 | sort by FileSize desc
-| take 10
+| take 20
 
 ```
 
@@ -1873,10 +1935,11 @@ AlertInfo
 
 ```kusto
 EmailEvents
-| where Timestamp > ago(1d)
+| where Timestamp > ago(14d)
+| where RecipientEmailAddress =~ "user@contoso.com"
 | summarize 
     EmailCount = count() 
-    by SenderFromDomain
+    by SenderFromAddress
 | top 20 by EmailCount desc
 ```
 
@@ -1893,12 +1956,14 @@ EmailEvents
 
 ```kusto
 EmailAttachmentInfo
-| where Timestamp > ago(7d)
+| where Timestamp > ago(1d)
 | summarize
     AttachmentCount = count(), 
     DistinctMessages = dcount(NetworkMessageId)
     by FileType
-| top 10 by AttachmentCount desc
+| sort by AttachmentCount desc
+| take 10
+// | top 10 by AttachmentCount desc
 ```
 
 ```kusto
@@ -1937,7 +2002,7 @@ IdentityLogonEvents
 ```kusto
 // Top 10 Teams message senders with threat detections
 MessageEvents
-| where Timestamp > ago(7d)
+// | where Timestamp > ago(7d)
 | where ThreatTypes != ""
 | summarize
     ThreatMessages = count(),
@@ -2003,6 +2068,10 @@ CloudAppEvents
 | where ActionType contains "Create"
 | sample 10
 ```
+
+1) ==
+2) has
+3) contains
 
 ### How `has` and `contains` work behind the scenes
 
@@ -2135,8 +2204,8 @@ EmailPostDeliveryEvents
 
 ```kusto
 EmailEvents
-| where Timestamp > ago(7d)
-| where ThreatTypes has "Phish"
+// | where Timestamp > ago(7d)
+| where ThreatTypes contains "Phish"
 | project Timestamp, SenderFromAddress, RecipientEmailAddress, Subject, ThreatTypes, ThreatNames, DetectionMethods, ConfidenceLevel, DeliveryLocation
 | take 25
 ```
