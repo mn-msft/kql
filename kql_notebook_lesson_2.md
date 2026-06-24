@@ -243,7 +243,7 @@ EmailUrlInfo
 
 ```kusto
 EmailEvents
-| where RecipientEmailAddress == "user@contoso.com"
+| where RecipientEmailAddress == "mike.taylor@contoso.com"
 | where DeliveryLocation has "Inbox"
 | summarize Count = count() by SenderFromDomain
 ```
@@ -351,7 +351,7 @@ EmailEvents                                                 // Query the EmailEv
     Total = count(),                                        // Total messages from this sender
     WithAttachments = countif(AttachmentCount > 0)          // Messages that included at least one attachment
     by SenderFromDomain                                     // One row per sender domain
-| sort by Total desc
+| top 20 by Total desc
 ```
 
 ```kusto
@@ -386,7 +386,7 @@ EntraIdSignInEvents
 ```kusto
 // Count blocked clicks vs click-throughs per user
 UrlClickEvents
-| where Timestamp > ago(7d)
+// | where Timestamp > ago(7d)
 | summarize
     Blocked      = countif(ActionType == "ClickBlocked"),
     ClickedThru  = countif(IsClickedThrough == true)
@@ -498,6 +498,7 @@ EmailEvents                         // Query the EmailEvents table (each row rep
 
 ```kusto
 EmailAttachmentInfo
+| where Timestamp > ago (14d)
 | summarize LargestFile = max(FileSize) 
     by FileType
 ```
@@ -775,6 +776,7 @@ After: One row with JSON object
 // Collect email metadata into a single JSON object per message
 EmailEvents                                          // Query the EmailEvents table
 | where Timestamp > ago(7d)                          // Limit to last 7 days
+| where RecipientEmailAddress == "user@contoso.com"
 | extend                                             // Create key-value pair for each row
     EmailDetail = bag_pack(                              // Pack fields into JSON object
         "Subject", Subject,
@@ -1056,12 +1058,21 @@ After: Latest sign-in per user
 ```kusto
 IdentityLogonEvents                     // Query identity logon events
 | summarize                             // Aggregate by account UPN
-    arg_max(Timestamp, *)               // Select the most recent event and return all columns
+    max(Timestamp)               // Select the most recent event and return all columns
     by AccountUpn                       // One row per account
 ```
 
 ```kusto
+IdentityLogonEvents                     // Query identity logon events
+| summarize                             // Aggregate by account UPN
+    arg_max(Timestamp, *)               // Select the most recent event and return all columns
+    by AccountUpn                       // One row per account
+| take 5
+```
+
+```kusto
 EmailAttachmentInfo                     // Query email attachment metadata
+| where Timestamp >= ago(1d)
 | summarize                             // Aggregate by recipient email address
     arg_max(FileSize, FileName)         // Select the largest attachment and return its file name
     by RecipientEmailAddress            // One row per recipient
@@ -1077,8 +1088,9 @@ EmailEvents                                             // Query email events
 
 ```kusto
 CloudAppEvents                                      // Query cloud application activity events
+| where Timestamp > ago (1d)
 | summarize                                         // Aggregate by account object ID
-    arg_max(Timestamp, ActionType, Application)     // Select the most recent action and app
+    arg_max(Timestamp, ActionType, Application, RawEventData)     // Select the most recent action and app
     by AccountObjectId                              // One row per account
 ```
 
@@ -1163,9 +1175,9 @@ IdentityLogonEvents                  // Query identity logon events
 ```kusto
 EmailAttachmentInfo                         // Query email attachment metadata
 | summarize                                 // Aggregate by recipient email address
-    arg_min(FileSize, FileName, FileType)   // Select the smallest attachment and return its details
+    arg_max(FileSize, *)   // Select the smallest attachment and return its details
     by RecipientEmailAddress                // One row per recipient
-| sort by FileSize asc                      // Sort recipients by smallest attachment size
+| sort by FileSize desc                      // Sort recipients by smallest attachment size
 ```
 
 ```kusto
@@ -1219,6 +1231,7 @@ UrlClickEvents
 // take_any() — one sample subject line per sender (arbitrary, not latest)
 EmailEvents
 | where Timestamp > ago(7d)
+| where RecipientEmailAddress == "user@contoso.com"
 | summarize
     SampleSubject = take_any(Subject),
     EmailCount    = count()
@@ -1269,9 +1282,11 @@ Common intervals: 5m, 15m, 1h, 1d, 7d
 
 ```kusto
 EmailEvents                          // Query the EmailEvents table
+| where Timestamp > ago (7d)
 | summarize                          // Aggregate events into fixed 1-hour time buckets
     MessagesPerHourBlock = count()   // Count number of email events per hour
     by bin(Timestamp, 1h)            // Group events into 1-hour time bins
+| render columnchart   
 ```
 
 ```kusto
@@ -1280,6 +1295,7 @@ CloudAppEvents                       // Query cloud application activity events
 | summarize                          // Aggregate events into fixed 1-day time buckets
     EventsPerDay = count()           // Count number of events per day
     by bin(Timestamp, 1d)            // Group events into 1-day time bins
+| render columnchart 
 ```
 
 ```kusto
@@ -1317,8 +1333,9 @@ EmailPostDeliveryEvents
 | where ActionType has "ZAP"
 | summarize
     ZapActionsPerHour = count()
-    by bin(Timestamp, 1h)
+    by bin(Timestamp, 12h)
 | sort by Timestamp asc
+| render barchart 
 ```
 
 [back to top](#kql-intermediate-series)
@@ -1476,6 +1493,7 @@ EmailEvents                                          // Query email events
 | join kind=inner (                                  // Join with URL clicks
     UrlClickEvents
     // | where Timestamp > ago(7d)                      // Same rolling window
+    | where ActionType == "ClickBlocked"
     | project                                        // Select click fields
         NetworkMessageId,
         ClickTime = Timestamp,
@@ -1542,9 +1560,9 @@ UrlClickEvents
 
 **How `let` works**
 ```kusto
-let timeframe = 7d;                     // Value
-let badDomains = dynamic(["x","y"]);    // Array
-let suspiciousEmails = EmailEvents      // Table query
+let _timeFrame = 7d;                     // Value
+let _badDomains = dynamic(["x","y"]);    // Array
+let _suspiciousEmails = EmailEvents      // Table query
 | where Subject has "invoice";
 ```
 <pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
@@ -1560,7 +1578,7 @@ suspiciousEmails
 **Examples**
 
 ```kusto
-let timeframe = 7d;                     // Define a reusable time window (last 7 days)
+let timeframe = 3h;                     // Define a reusable time window (last 7 days)
 EmailEvents                             // Query the EmailEvents table
 | where Timestamp > ago(timeframe)      // Filter events using the timeframe variable
 | summarize                             // Aggregate by sender domain
@@ -1570,7 +1588,7 @@ EmailEvents                             // Query the EmailEvents table
 
 ```kusto
 // create array
-let suspiciousDomains = dynamic(["evil.com", "phish.net"]);         // Define a list of suspicious domains
+let suspiciousDomains = dynamic(["evil.com", "phish.net","groupon.com"]);         // Define a list of suspicious domains
 EmailUrlInfo                                                        // Query URL metadata from email events
 | where UrlDomain in (suspiciousDomains)                            // Return only URLs matching the suspicious domain list
 ```
@@ -1611,8 +1629,9 @@ let Orders = datatable(UserId:int, OrderId:int, Amount:int)
     3, 104, 150,
     7, 105, 400
 ];
-// Users
-Orders
+Users
+// | where UserName contains "Dan"
+// Orders
 ```
 
 ```kusto
@@ -1718,6 +1737,66 @@ CloudAppEvents
     ShareItemType              = tostring(Raw.ItemType)
 | where isnotempty(ShareObjectId)
 | project
+    ShareTime                  = TimeGenerated,
+    ShareAction                = ActionType,
+    ShareObjectId,
+    ShareItemType,
+    ShareUserId,
+    SharePermission,
+    ShareSharingLinkScope,
+    ShareEV,
+    ShareTargetUserOrGroupName,
+    ShareTargetUserOrGroupType,
+    RawEventData,
+    Application
+```
+
+```kusto
+let dlp_files = toscalar(
+    CloudAppEvents
+    | where TimeGenerated >= ago(90d)
+    | where Application in (
+        "Microsoft SharePoint Online",
+        "Microsoft OneDrive for Business"
+        )
+    | where ActionType =~ "DLPRuleMatch"
+    | where isnotempty(ObjectName)
+    | extend ObjectName = url_decode(ObjectName)
+    | summarize make_set(ObjectName)
+    );
+CloudAppEvents
+| where TimeGenerated >= ago(2h)
+| where Application in (
+    "Microsoft SharePoint Online",
+    "Microsoft OneDrive for Business"
+    )
+| where ActionType in~ (
+    "CompanyLinkCreated", 
+    "CompanyLinkUpdated",
+    "SharingLinkCreated",
+    "SharingLinkUpdated",
+    "AnonymousLinkCreated",
+    "AnonymousLinkUpdated",
+    "SecureLinkCreated",
+    "SecureLinkUpdated",
+    "SharingSet",
+    "AddedToSharingLink",
+    "AddedToSecureLink"
+    )
+| extend Raw = parse_json(RawEventData)
+| extend ShareObjectId = tostring(Raw.ObjectId)
+| where isnotempty(ShareObjectId)
+| where ShareObjectId in (dlp_files)
+| extend
+    ShareUserId                = tostring(Raw.UserId),
+    SharePermission            = tostring(Raw.Permission),
+    ShareSharingLinkScope      = tostring(Raw.SharingLinkScope),
+    ShareEV                    = tostring(Raw.EventData),
+    ShareTargetUserOrGroupName = tostring(Raw.TargetUserOrGroupName),
+    ShareTargetUserOrGroupType = tostring(Raw.TargetUserOrGroupType),
+    ShareItemType              = tostring(Raw.ItemType)
+| project
+    TimeGenerated,
     ShareTime                  = TimeGenerated,
     ShareAction                = ActionType,
     ShareObjectId,
@@ -2630,7 +2709,7 @@ So the output is:
 ```kusto
 let Attachments =                                                   // Define unique attachment set
     EmailAttachmentInfo                                             // Query email attachment metadata
-    | where Timestamp >= ago(21d)                                   // Limit to last x days
+    | where Timestamp >= ago(1d)                                   // Limit to last x days
     | summarize                                                     // De-duplicate attachments
         FileSize = max(FileSize)                                    // Defensive max in case of duplicates
         by NetworkMessageId, FileName                               // One row per unique attachment
@@ -2638,7 +2717,7 @@ let Attachments =                                                   // Define un
         FileSizeMB = round(FileSize / 1024.0 / 1024.0, 2);          // Convert bytes to MB
 let MessageInfo =                                                   // Define per-message email metadata
     EmailEvents                                                     // Query email events
-    | where Timestamp >= ago(21d)                                   // Match attachment time window
+    | where Timestamp >= ago(1d)                                   // Match attachment time window
     | summarize                                                     // Select one representative event per message
         arg_max(
         Timestamp,                                                  // Choose the most recent event
@@ -2859,24 +2938,40 @@ union
 <a id="externaldata" name="externaldata"></a>
 ## externaldata
 
-- Import external CSV or JSON data for comparison.
-- Supports public URLs and authenticated Azure Blob Storage URLs.
-- Azure Blob examples below use SAS token URLs — replace `<your-sas-token>` with a valid SAS token scoped to your own storage account and container.
+- Imports external CSV, JSON, or TSV data as an inline table at query time.
+- The data source can be a public URL or an authenticated Azure Blob Storage URL (SAS token).
+- The schema is declared inline: `externaldata(col1:type, col2:type) [url]`.
+- Combine with `lookup` or `join` to enrich local telemetry with external threat intelligence or reference data.
+
+> **Use case in security investigations:** load IOC feeds, hash blocklists, known-bad domains, or enrichment tables from external sources — all without importing data into a persistent table.
+
+| Source type | URL format | Notes |
+|---|---|---|
+| Public HTTP | `[@"https://..."]` | No authentication, must allow anonymous reads |
+| Azure Blob (SAS) | `[@"https://..."] h@"?<sas-token>"` | Use SAS token scoped to read on the container/blob |
 
 **Examples**
 
+
 ```kusto
-// Replace <your-host>/blocklist.csv with a real publicly accessible CSV URL
+// Load a public CSV of known-bad domains and match against email URLs
 externaldata(Domain:string)
 [@"https://<your-host>/blocklist.csv"]
-| join kind=inner (EmailUrlInfo) on $left.Domain == $right.UrlDomain
+with (format='csv', ignorefirstrecord=true)
+| join kind=inner (
+    EmailUrlInfo
+    | where Timestamp > ago(7d)
+    | project NetworkMessageId, UrlDomain
+) on $left.Domain == $right.UrlDomain
+| project NetworkMessageId, UrlDomain
+| take 20
 ```
 
 ```kusto
 let imid =
     externaldata (Message_ID: string) [
-    @"https://<your-account>.blob.core.windows.net/<container>/<file>.csv"
-    h@"?<your-sas-token>"
+        @"https://bwdemoblob.blob.core.windows.net/curated/EmailEvents_20260120_160736.csv"
+        h@"?sp=r&st=2026-06-03T14:02:51Z&se=2026-06-03T22:17:51Z&spr=https&sv=2026-02-06&sr=b&sig=6uXz6dpzgbdnU3pT6DMQ3fWSCivggGEzD6cw7rxuMZs%3D"
     ]
     with (format='csv', ignorefirstrecord=true)
     | project Message_ID;
@@ -2886,15 +2981,35 @@ imid;
 ```kusto
 let imid =
     externaldata (Message_ID:string) [
-        @"https://<your-account>.blob.core.windows.net/<container>/<file>.csv"
-        h@"?<your-sas-token>"
+        @"https://bwdemoblob.blob.core.windows.net/curated/EmailEvents_20260120_160736.csv"
+        h@"?sp=r&st=2026-06-03T14:02:51Z&se=2026-06-03T22:17:51Z&spr=https&sv=2026-02-06&sr=b&sig=6uXz6dpzgbdnU3pT6DMQ3fWSCivggGEzD6cw7rxuMZs%3D"
     ]
     with (format='csv', ignorefirstrecord=true)
     | project Message_ID;
 EmailEvents
-| where Timestamp >= ago(30d)
-| where RecipientEmailAddress == "user@contoso.com"
+// | where Timestamp >= ago(30d)
+| where RecipientEmailAddress == "lily.reed@contoso.com"
 | where InternetMessageId in (imid)
+```
+
+```kusto
+// Load hash blocklist from Azure Blob Storage (SAS-authenticated)
+let BlockedHashes = (
+    externaldata(SHA256:string)
+    [
+        @"https://<your-account>.blob.core.windows.net/<container>/hash-blocklist.txt"
+        h@"?<your-sas-token>"
+    ]
+    with (format='txt')
+    | where SHA256 !startswith "#"  // skip comment lines
+    | project SHA256
+);
+EmailAttachmentInfo
+| where Timestamp > ago(7d)
+| where isnotempty(SHA256)
+| lookup kind=inner BlockedHashes on SHA256
+| project Timestamp, SenderFromAddress, FileName, SHA256
+| take 20
 ```
 
 [back to top](#kql-intermediate-series)
@@ -3140,7 +3255,7 @@ EmailEvents                                          // Query the EmailEvents ta
 ```kusto
 // Classify delivery outcomes
 EmailEvents                                          // Query the EmailEvents table
-| where Timestamp > ago(7d)                          // Limit to last 7 days
+// | where Timestamp > ago(7d)                          // Limit to last 7 days
 | extend                                             // Add delivery classification
     DeliveryOutcome = case(                          // Evaluate delivery location
         DeliveryLocation == "Inbox", "Delivered",
@@ -3163,10 +3278,10 @@ EmailEvents                                          // Query the EmailEvents ta
     by SenderFromDomain
 | extend                                             // Add volume-based risk tier
     VolumeTier = case(                               // Classify by email count
-        EmailCount > 1000, "Very High Volume",
-        EmailCount > 500, "High Volume",
-        EmailCount > 100, "Medium Volume",
-        EmailCount > 10, "Low Volume",
+        EmailCount > 10000000, "Very High Volume",
+        EmailCount > 5000000, "High Volume",
+        EmailCount > 1000000, "Medium Volume",
+        EmailCount > 100000, "Low Volume",
         "Minimal"                                    // Default
     )
 | sort by EmailCount desc
@@ -3281,8 +3396,13 @@ SomeTable
 
 ```kusto
 CloudAppEvents
+| getschema 
+```
+
+```kusto
+CloudAppEvents
 | extend Data = parse_json(RawEventData)
-| take 1
+| sample 5
 | project Data
 // | project Data.Id, Data.AppId
 ```
@@ -3328,7 +3448,8 @@ let dlp_history =
         DLPPolicyId   = RawPolicyId,
         DLPPolicyName = RawPolicyName,
         DLPRuleId     = RawRuleId,
-        DLPRuleName   = RawRuleName;
+        DLPRuleName   = RawRuleName,
+        RawEventData;
 dlp_history
 ```
 
