@@ -3305,7 +3305,7 @@ AlertInfo
 
 ### Data retention
 
-Advanced Hunting retains data for **30 days** by default. Extended retention up to 180 days is available with Microsoft Defender XDR add-on licensing. Queries beyond your retention window return no results — not an error, just an empty result set. If you see an unexpectedly empty result, check your time window first.
+Advanced Hunting retains data for **30 days** by default. Queries beyond your retention window return no results — not an error, just an empty result set. If you see an unexpectedly empty result, check your time window first.
 
 [back to top](#kql-for-email-security-beginner-series)
 
