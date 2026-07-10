@@ -802,32 +802,6 @@ EmailAttachmentInfo                                  // Query email attachment m
 ```
 
 ```kusto
-// Build a lookup bag of sender → domain relationships
-EmailEvents                                          // Query the EmailEvents table
-| where Timestamp > ago(7d)                          // Limit to last 7 days
-| extend                                             // Create sender → domain mapping
-    SenderMapping = bag_pack(                            // Pack as key-value pair
-        SenderFromAddress,                           // Sender email as key
-        SenderFromDomain                             // Domain as value
-    )
-| summarize                                          // Aggregate across all rows
-    SenderDomainLookup = make_bag(SenderMapping)     // Merge into lookup dictionary
-```
-
-```kusto
-// Build file type → SHA256 hash lookup per sender
-EmailAttachmentInfo                                  // Query email attachment metadata
-| where Timestamp > ago(7d)                          // Limit to last 7 days
-| where isnotempty(SHA256)                           // Only attachments with hash values
-| extend                                             // Create file type → hash mapping
-    HashMapping = bag_pack(FileType, SHA256)             // Pack file type as key, hash as value
-| summarize                                          // Aggregate by sender
-    FileHashBag = make_bag(HashMapping)              // Merge into lookup dictionary
-    by SenderFromAddress                             // One row per sender
-| take 10
-```
-
-```kusto
 // Aggregate user actions per application
 CloudAppEvents                                       // Query cloud application events
 | where Timestamp > ago(7d)                          // Limit to last 7 days
@@ -1175,7 +1149,7 @@ IdentityLogonEvents                  // Query identity logon events
 ```kusto
 EmailAttachmentInfo                         // Query email attachment metadata
 | summarize                                 // Aggregate by recipient email address
-    arg_max(FileSize, *)   // Select the smallest attachment and return its details
+    arg_min(FileSize, *)   // Select the smallest attachment and return its details
     by RecipientEmailAddress                // One row per recipient
 | sort by FileSize desc                      // Sort recipients by smallest attachment size
 ```
@@ -1206,6 +1180,27 @@ UrlClickEvents
 | summarize
     arg_min(Timestamp, Url, ActionType)
     by AccountUpn
+```
+
+```kusto
+// AiTM detection: stolen session cookie reused from a different country
+// A stolen session cookie shares the original SessionId but the attacker signs in from a new country
+// arg_min(Timestamp, Country) captures the first (legitimate) country for each session
+let OfficeHomeSessions =
+    EntraIdSignInEvents
+    | where Timestamp > ago(7d) and ErrorCode == 0
+        and ApplicationId == "4765445b-32c6-49b0-83e6-1d93765276ca"  // Office Home app
+        and ClientAppUsed == "Browser"
+    | summarize arg_min(Timestamp, Country) by SessionId;
+EntraIdSignInEvents
+| where Timestamp > ago(7d)
+    and ApplicationId != "4765445b-32c6-49b0-83e6-1d93765276ca"
+    and ClientAppUsed == "Browser"
+| project OtherTimestamp = Timestamp, AccountObjectId,
+    AccountDisplayName, OtherCountry = Country, SessionId
+| join kind=inner OfficeHomeSessions on SessionId
+| where OtherTimestamp > Timestamp   // later sign-in on same session
+    and OtherCountry != Country        // from a different country
 ```
 
 [back to top](#kql-intermediate-series)
@@ -1548,6 +1543,32 @@ UrlClickEvents
 | sort by SpanHours desc
 ```
 
+**Two-pass baseline exclusion**
+
+A common let pattern: build a known set from a historical window, then exclude it from the current window. Useful for detecting first-time or anomalous behavior.
+
+```kusto
+// Two-pass baseline exclusion — detect senders with a new bulk spike
+// Pass 1: build the set of known high-volume senders over the last 30 days (excluding today)
+let knownBulkSenders =
+    EmailEvents
+    | where Timestamp between (ago(30d) .. ago(1d))
+    | where EmailDirection == "Inbound" and DeliveryAction == "Delivered"
+    | summarize RecipientCount = dcount(RecipientEmailAddress)
+        by SenderFromAddress, bin(Timestamp, 10m)
+    | where RecipientCount > 500
+    | distinct SenderFromAddress;
+// Pass 2: find today's bulk senders not seen before
+EmailEvents
+| where Timestamp > ago(1d)
+| where EmailDirection == "Inbound"
+| where SenderFromAddress !in (knownBulkSenders)
+| summarize RecipientCount = dcount(RecipientEmailAddress)
+    by SenderFromAddress, bin(Timestamp, 10m)
+| where RecipientCount > 500
+| sort by RecipientCount desc
+```
+
 [back to top](#kql-intermediate-series)
 
 ---
@@ -1697,13 +1718,6 @@ Common situations:
 All functions return `null` (not an error) when the value cannot be converted.
 
 **Examples**
-
-```kusto
-CloudAppEvents
-| where Timestamp > ago(7d)
-| where ActionType contains "FileUploaded"
-| take 10
-```
 
 ```kusto
 CloudAppEvents
@@ -1883,17 +1897,6 @@ EmailEvents
 
 ```kusto
 EmailEvents                             // Query the EmailEvents table
-| where Timestamp >= ago(1d)            // Filter by time
-| project                               // Shape the output into a compact structure
-    Details = pack_array(               // Create an ordered array of related email fields
-        SenderFromAddress,              // Sender email address
-        RecipientEmailAddress,          // Recipient email address
-        Subject                         // Email subject
-    )
-```
-
-```kusto
-EmailEvents                             // Query the EmailEvents table
 | where Timestamp >= ago(1d)            // Limit to email events from the last 1 day
 | project                               // Shape the output and build a compact context array
     NetworkMessageId,
@@ -1913,55 +1916,6 @@ EmailEvents                             // Query the EmailEvents table
 ```
 
 ```kusto
-IdentityLogonEvents                     // Query identity logon events
-| project                               // Shape the output into a compact structure
-    Summary = pack_array(               // Create an ordered array of identity-related fields
-        AccountUpn,                     // User principal name
-        Application,                    // Application involved in the logon
-        ActionType                      // Logon result/action
-    )
-```
-
-```kusto
-EmailAttachmentInfo                     // Query email attachment metadata
-| project                               // Shape the output into a compact structure
-    FileSummary = pack_array(           // Create an ordered array of attachment attributes
-        FileName,                       // Attachment file name
-        FileType,                       // Attachment file type
-        FileSize                        // Attachment size (bytes)
-    )
-```
-
-```kusto
-// Bundle key alert fields into a compact ordered array
-AlertInfo
-| where Timestamp > ago(7d)
-| project
-    AlertSummary = pack_array(
-        Title,        //   [0] Alert title
-        Severity,     //   [1] Severity level
-        Category,     //   [2] MITRE category
-        ServiceSource //   [3] Detecting service
-    )
-| take 10
-```
-
-```kusto
-// Bundle sign-in context into a compact array per event
-EntraIdSignInEvents
-| where Timestamp > ago(1d)
-| where ErrorCode != 0
-| project
-    FailureContext = pack_array(
-        AccountUpn,  //   [0] User
-        Application, //   [1] App targeted
-        Country,     //   [2] Origin country
-        ErrorCode    //   [3] Failure reason
-    )
-| take 10
-```
-
-```kusto
 // Create a JSON object with email details
 EmailEvents                                          // Query the EmailEvents table
 | take 5                                             // Limit to 5 rows for demo
@@ -1972,102 +1926,6 @@ EmailEvents                                          // Query the EmailEvents ta
         "Subject", Subject                           // Key-value pair for subject
     )
 | project Timestamp, EmailSummary                    // Display timestamp and packed summary
-```
-
-```kusto
-EmailEvents
-| project
-    NetworkMessageId,
-    EmailDetails = bag_pack(
-        "Sender", SenderFromAddress,
-        "Recipient", RecipientEmailAddress,
-        "Subject", Subject
-    )
-| sample 5
-```
-
-```kusto
-EmailEvents
-| extend RecipientBag = bag_pack(
-    RecipientEmailAddress,
-    DeliveryLocation
-)
-| summarize make_bag(RecipientBag)
-    by NetworkMessageId
-| sample 5
-```
-
-```kusto
-// Create a JSON object with logon event details
-IdentityLogonEvents                                  // Query identity logon events
-| take 5                                             // Limit to 5 rows for demo
-| extend                                             // Add a new column with packed JSON
-    LogonSummary = bag_pack(                             // Create JSON object with named keys
-        "User", AccountUpn,                          // Key-value pair for user
-        "App", Application,                          // Key-value pair for application
-        "Result", ActionType                         // Key-value pair for logon result
-    )
-| project Timestamp, LogonSummary                    // Display timestamp and packed summary
-```
-
-```kusto
-// Create a JSON object with attachment metadata
-EmailAttachmentInfo                                  // Query email attachment metadata
-| take 5                                             // Limit to 5 rows for demo
-| extend                                             // Add a new column with packed JSON
-    FileSummary = bag_pack(                              // Create JSON object with named keys
-        "Name", FileName,                            // Key-value pair for file name
-        "Type", FileType,                            // Key-value pair for file type
-        "SizeBytes", FileSize                        // Key-value pair for file size
-    )
-| project NetworkMessageId, FileSummary              // Display message ID and packed summary
-```
-
-```kusto
-// Create a JSON summary object per alert
-AlertInfo
-| where Timestamp > ago(7d)
-| where Severity == "High"
-| take 5
-| extend
-    AlertSummary = bag_pack(
-        "Title",         Title,
-        "Severity",      Severity,
-        "Category",      Category,
-        "ServiceSource", ServiceSource
-    )
-| project Timestamp, AlertId, AlertSummary
-```
-
-```kusto
-// Create a JSON object per Entra sign-in failure
-EntraIdSignInEvents
-| where Timestamp > ago(1d)
-| where ErrorCode != 0
-| take 5
-| extend
-    FailureDetail = bag_pack(
-        "User",      AccountUpn,
-        "App",       Application,
-        "Country",   Country,
-        "ErrorCode", ErrorCode
-    )
-| project Timestamp, FailureDetail
-```
-
-```kusto
-// Create a JSON object per URL click event
-UrlClickEvents
-| where Timestamp > ago(7d)
-| take 5
-| extend
-    ClickDetail = bag_pack(
-        "User",            AccountUpn,
-        "Url",             Url,
-        "Action",          ActionType,
-        "ClickedThrough",  IsClickedThrough
-    )
-| project Timestamp, ClickDetail
 ```
 
 [back to top](#kql-intermediate-series)
@@ -2349,27 +2207,18 @@ Users                    Orders                     leftanti join Result
 </pre>
 
 ```kusto
-// leftanti join - find rows with NO match (great for finding gaps)
-let Users = datatable(UserId:int, UserName:string)              // Define left table: Users
-[
-    1, "Alice",
-    2, "Bob",
-    3, "Carol",
-    4, "Dan",
-    5, "Eve",
-    6, "Frank"
-];
-let Orders = datatable(UserId:int, OrderId:int, Amount:int)     // Define right table: Orders
-[
-    1, 101, 250,
-    2, 102, 175,
-    2, 103, 320,
-    3, 104, 150,
-    7, 105, 400
-];
-Users                                                           // Start with Users table
-| join kind=leftanti Orders on UserId                           // Keep only users who have NO orders
-// Result: Dan, Eve, Frank - users without any orders
+// leftanti join — find threats that arrived but were never remediated
+// Keep all rows from EmailEvents that have NO matching row in EmailPostDeliveryEvents
+// The composite key (NetworkMessageId + RecipientEmailAddress) ensures per-recipient accuracy:
+// the same message can be remediated for one recipient but not another
+EmailEvents
+| where Timestamp > ago(7d)
+| where ThreatTypes in ("Phish", "Malware")
+    and EmailAction !in ("Replace attachment", "Send to quarantine")
+| join kind=leftanti EmailPostDeliveryEvents
+    on NetworkMessageId, RecipientEmailAddress
+| project Timestamp, SenderFromAddress, RecipientEmailAddress,
+    Subject, ThreatTypes, DeliveryLocation
 ```
 
 ---
@@ -2475,12 +2324,6 @@ Deduping the join key e.g. `NetworkMessageId` would lead to losing:
 **Dedupe methods**
 
 ```kusto
-// group by NMID
-EmailAttachmentInfo
-| summarize by NetworkMessageId
-```
-
-```kusto
 // return unique NMID
 EmailAttachmentInfo
 | distinct NetworkMessageId
@@ -2492,22 +2335,12 @@ Preserve Message + Attachment relationship
 
 ```kusto
 EmailAttachmentInfo
-| summarize by NetworkMessageId, FileName
-```
-
-```kusto
-EmailAttachmentInfo
 | distinct NetworkMessageId, FileName
 ```
 
 #### Scenario 2
 
 Preserve Message + Recipient relationship
-
-```kusto
-EmailAttachmentInfo
-| summarize by NetworkMessageId, RecipientEmailAddress
-```
 
 ```kusto
 EmailAttachmentInfo
@@ -2954,17 +2787,21 @@ union
 
 
 ```kusto
-// Load a public CSV of known-bad domains and match against email URLs
-externaldata(Domain:string)
-[@"https://<your-host>/blocklist.csv"]
-with (format='csv', ignorefirstrecord=true)
+// Live threat intel — match email attachments against abuse.ch SHA256 blocklist
+// externaldata() fetches the feed at query time; !startswith "#" strips comment lines
+let MaliciousHashes = (
+    externaldata(SHA256: string)
+    [@"https://bazaar.abuse.ch/export/txt/sha256/recent/"]
+    with (format="txt")
+    | where SHA256 !startswith "#"
+);
+MaliciousHashes
 | join kind=inner (
-    EmailUrlInfo
-    | where Timestamp > ago(7d)
-    | project NetworkMessageId, UrlDomain
-) on $left.Domain == $right.UrlDomain
-| project NetworkMessageId, UrlDomain
-| take 20
+    EmailAttachmentInfo
+    | where Timestamp > ago(1d)
+) on SHA256
+| project Timestamp, SenderFromAddress, RecipientEmailAddress,
+    FileName, FileType, SHA256, ThreatTypes, DetectionMethods
 ```
 
 ```kusto
