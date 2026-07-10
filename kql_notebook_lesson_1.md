@@ -770,7 +770,7 @@ EmailEvents // 53 columns
 
 ```kusto
 // Scoped to specific tables — cheaper than naked search
-search in (EmailEvents, CloudAppEvents) "mike.taylor@contoso.com"
+search in (EmailEvents, CloudAppEvents) "mike.taylor@banwinner.com"
 | where Timestamp > ago(7d)
 // | take 10
 ```
@@ -840,14 +840,6 @@ EmailAttachmentInfo | take 10
 ```
 
 ```kusto
-EmailAttachmentInfo | sample 10
-```
-
-```kusto
-EmailUrlInfo | take 10
-```
-
-```kusto
 UrlClickEvents 
 | where Timestamp > ago (7d)
 | project Timestamp, Url, ActionType, IsClickedThrough, ThreatTypes, AccountUpn, Workload
@@ -855,19 +847,9 @@ UrlClickEvents
 ```
 
 ```kusto
-EmailPostDeliveryEvents 
-| where Timestamp >= ago(24h)
-// | take 10
-```
-
-```kusto
 IdentityLogonEvents
 | where Timestamp > ago(1d)
 | take 10
-```
-
-```kusto
-MessageEvents | take 10
 ```
 
 [back to top](#kql-for-email-security-beginner-series)
@@ -920,10 +902,6 @@ IdentityLogonEvents
 | where Timestamp > ago(1d)
 | where ActionType == "LogonFailed"
 | sample 10
-```
-
-```kusto
-Search-UnifiedAuditLog 
 ```
 
 ```kusto
@@ -1045,6 +1023,17 @@ IdentityLogonEvents
 | take 20
 ```
 
+```kusto
+// EmailClusterId — Defender groups related emails into a campaign cluster automatically
+// isnotempty() guards against ungrouped messages returning a blank group key
+EmailEvents
+| where Timestamp > ago(7d)
+| where EmailDirection == "Inbound"
+| where isnotempty(EmailClusterId)
+| distinct EmailClusterId, Subject, SenderFromAddress, SenderFromDomain
+| sort by EmailClusterId asc
+```
+
 [back to top](#kql-for-email-security-beginner-series)
 
 ---
@@ -1117,11 +1106,6 @@ CloudAppEvents
 ```
 
 ```kusto
-CloudAppEvents
-| distinct Application, ActionType
-```
-
-```kusto
 // LogonSuccess means success in identity logon events
 IdentityLogonEvents
 | where Timestamp > ago(1d)
@@ -1167,11 +1151,6 @@ AlertEvidence
 ```
 
 ```kusto
-EmailUrlInfo
-| distinct UrlLocation
-```
-
-```kusto
 // only URLs embedded in the email body
 EmailUrlInfo
 | where Timestamp > ago(7d)
@@ -1201,11 +1180,6 @@ EmailPostDeliveryEvents
 ```kusto
 EmailEvents
 | where NetworkMessageId == "be65f1c4-68e9-484c-73ed-08dec25bf876"
-```
-
-```kusto
-EmailPostDeliveryEvents
-| distinct ActionType
 ```
 
 ```kusto
@@ -1413,11 +1387,6 @@ EmailAttachmentInfo
 EmailEvents
 | where SenderFromAddress =~ "MIKE.TAYLOR@contoso.com"
 | take 5
-```
-
-```kusto
-EmailEvents
-| where SenderFromDomain == ""
 ```
 
 ```kusto
@@ -2142,13 +2111,6 @@ EmailEvents
 ```
 
 ```kusto
-// startswith
-IdentityLogonEvents
-| where Application startswith "Microsoft"
-| distinct Application
-```
-
-```kusto
 // has — fast token match on alert titles
 AlertInfo
 // | where Timestamp > ago(7d)
@@ -2256,12 +2218,6 @@ EmailEvents
 ```
 
 ```kusto
-EmailUrlInfo
-// | where UrlLocation == "Body"
-| where Url contains "groupon.com"
-```
-
-```kusto
 EmailEvents
 | where Timestamp > ago(7d)
 | where SenderFromAddress has_all ("microsoft","noreply")
@@ -2337,6 +2293,23 @@ print Subject = "invoice_2024"
 | extend MatchesHasAny = Subject has_any ("invoice"),
          MatchesIn = Subject in ("invoice")
 // Expected: MatchesHasAny = true, MatchesIn = false
+```
+
+### URL paths and tokenization
+
+`has` splits strings on non-alphanumeric characters including `/`. A URL path like `/saml2/index.html` tokenises into `saml2` and `index` and `html` — the slashes disappear. `has "/saml2/"` will **never match** because `/saml2/` is not a token.
+
+Use `has_any` or `contains` for URL path matching:
+
+```kusto
+// has fails on URL path segments — '/' is a token separator
+// has "/saml2/" would return 0 rows even when the URL contains it
+
+// Use has_any for multiple URL path patterns (still indexed, faster than contains)
+let SuspiciousPaths = dynamic(['/saml2/index.html', '/Udlaps/', '/adls/index.html']);
+EmailUrlInfo
+| where Timestamp > ago(7d)
+| where Url has_any (SuspiciousPaths)
 ```
 
 ### Wildcard column matching: `* has` and `* contains`
@@ -2551,38 +2524,6 @@ IdentityLogonEvents
 | count
 ```
 
-```kusto
-// Count Teams messages with threat detections this week
-MessageEvents
-| where Timestamp > ago(7d)
-| where ThreatTypes != ""
-| count
-```
-
-```kusto
-// Count URLs from external domains in last 7 days
-EmailUrlInfo
-| where Timestamp > ago(7d)
-| where UrlDomain !endswith "contoso.com"
-| count
-```
-
-```kusto
-// Count blocked clicks in last 24h
-UrlClickEvents
-| where Timestamp > ago(1d)
-| where ActionType == "ClickBlocked"
-| count
-```
-
-```kusto
-// Count ZAP actions this week
-EmailPostDeliveryEvents
-| where Timestamp > ago(7d)
-| where ActionType has "ZAP"
-| count
-```
-
 [back to top](#kql-for-email-security-beginner-series)
 
 ---
@@ -2617,15 +2558,6 @@ IdentityLogonEvents
 | where hourofday(Timestamp) < 6 or hourofday(Timestamp) >= 20
 | project Timestamp, AccountUpn, Application, Location, ActionType
 | take 20
-```
-
-```kusto
-// Sign-in failures only
-IdentityLogonEvents
-| where Timestamp > ago(1d)
-| where ActionType == "LogonFailed"
-| project Timestamp, AccountUpn, Application, IPAddress, ActionType
-| take 10
 ```
 
 ```kusto
@@ -2760,64 +2692,6 @@ CloudAppEvents
 | take 10
 ```
 
-```kusto
-// Last 24 hours of identity logon failures
-IdentityLogonEvents
-| where Timestamp >= ago(24h)
-| where ActionType == "LogonFailed"
-| take 10
-```
-
-```kusto
-// Last 4 hours of high-severity alerts
-AlertInfo
-| where Timestamp >= ago(4h)
-| where Severity == "High"
-| project Timestamp, Title, Severity, ServiceSource
-| take 10
-```
-
-```kusto
-// Last 48 hours of Teams message threats
-MessageEvents
-| where Timestamp >= ago(48h)
-| where ThreatTypes != ""
-| project Timestamp, TeamsMessageId, SenderEmailAddress, ThreatTypes
-| take 10
-```
-
-```kusto
-// Last 48 hours of URL click events
-UrlClickEvents
-| where Timestamp >= ago(48h)
-| project Timestamp, AccountUpn, Url, ActionType
-| take 10
-```
-
-```kusto
-// Last 14 days of email URL info
-EmailUrlInfo
-| where Timestamp >= ago(14d)
-| distinct UrlDomain
-| take 20
-```
-
-```kusto
-// Last 72 hours of post-delivery events
-EmailPostDeliveryEvents
-| where Timestamp >= ago(72h)
-| project Timestamp, NetworkMessageId, ActionType, ThreatTypes
-| take 10
-```
-
-```kusto
-// Last 30 days — distinct risky attachment senders
-EmailAttachmentInfo
-| where Timestamp >= ago(30d)
-| where FileExtension in (".exe", ".ps1", ".vbs")
-| distinct SenderFromAddress
-```
-
 ### between / datetime
 
 - Filter specific time ranges.
@@ -2837,62 +2711,6 @@ EmailEvents
 CloudAppEvents
 | where Timestamp between (ago(3d) .. ago(1d))
 | take 10
-```
-
-```kusto
-// Specific date range for identity logon events
-IdentityLogonEvents
-| where Timestamp between (datetime(2026-01-01) .. datetime(2026-01-07))
-| project Timestamp, AccountUpn, Application, IPAddress, ActionType
-| take 10
-```
-
-```kusto
-// Alert window: between 2 days ago and 6 hours ago
-AlertInfo
-| where Timestamp between (ago(2d) .. ago(6h))
-| project Timestamp, Title, Severity, ServiceSource
-| take 10
-```
-
-```kusto
-// Teams message threats in a specific window
-MessageEvents
-| where Timestamp between (ago(3h) .. ago(1h))
-| where ThreatTypes != ""
-| project Timestamp, TeamsMessageId, SenderEmailAddress, ThreatTypes
-| take 10
-```
-
-```kusto
-// URL clicks in a specific investigation window
-UrlClickEvents
-| where Timestamp between (datetime(2026-03-10T08:00:00Z) .. datetime(2026-03-10T18:00:00Z))
-// | project Timestamp, AccountUpn, Url, ActionType
-```
-
-```kusto
-// Post-delivery events in a specific incident window
-EmailPostDeliveryEvents
-| where Timestamp between (ago(3d) .. ago(1d))
-| where ActionType has "ZAP"
-| project Timestamp, NetworkMessageId, ActionType, ThreatTypes
-```
-
-```kusto
-// EmailUrlInfo — URLs seen in a specific date range
-EmailUrlInfo
-| where Timestamp between (datetime(2026-01-01) .. datetime(2026-01-31))
-| distinct UrlDomain
-| take 20
-```
-
-```kusto
-// EmailAttachmentInfo — risky files in a specific window
-EmailAttachmentInfo
-| where Timestamp between (ago(7d) .. ago(1d))
-| where FileExtension in (".exe", ".ps1", ".vbs")
-| project Timestamp, SenderFromAddress, FileName, FileExtension
 ```
 
 ### now()
@@ -3110,6 +2928,20 @@ EmailPostDeliveryEvents
 | sample 20
 ```
 
+```kusto
+// Extract the sender's domain from the full email address
+// split() splits a string on a delimiter and returns a dynamic array
+// [-1] indexes the last element — everything after the last '@'
+EmailEvents
+| where Timestamp > ago(7d)
+| where EmailDirection == "Inbound"
+| where DeliveryAction == "Blocked"
+| extend SenderDomain = tostring(split(SenderMailFromAddress, "@")[-1])
+| summarize BlockedCount = count() by SenderDomain
+| where isnotempty(SenderDomain)
+| sort by BlockedCount desc
+```
+
 [back to top](#kql-for-email-security-beginner-series)
 
 ---
@@ -3303,9 +3135,28 @@ AlertInfo
 | take 5
 ```
 
+### `ThreatTypes` is multi-valued
+
+`ThreatTypes` can hold multiple values in one string: `"Phish, Spam"`. Exact match with `==` silently returns zero rows. `has` matches the individual token correctly.
+
+```kusto
+// GOTCHA: == "Phish" fails when ThreatTypes is "Phish, Spam"
+// The field stores multiple threat labels, not a single value
+EmailEvents
+| where Timestamp > ago(7d)
+| where ThreatTypes == "Phish"  // returns 0 rows when value is "Phish, Spam"
+```
+
+```kusto
+// FIX: has matches the token inside the combined string
+EmailEvents
+| where Timestamp > ago(7d)
+| where ThreatTypes has "Phish"  // matches "Phish", "Phish, Spam", "Phish, Malware"
+```
+
 ### Data retention
 
-Advanced Hunting retains data for **30 days** by default. Queries beyond your retention window return no results — not an error, just an empty result set. If you see an unexpectedly empty result, check your time window first.
+Advanced Hunting retains data for **30 days** by default. Extended retention up to 180 days is available with Microsoft Defender XDR add-on licensing. Queries beyond your retention window return no results — not an error, just an empty result set. If you see an unexpectedly empty result, check your time window first.
 
 [back to top](#kql-for-email-security-beginner-series)
 
