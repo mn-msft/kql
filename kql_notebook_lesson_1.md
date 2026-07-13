@@ -94,15 +94,12 @@ Understanding how tables relate is critical for effective hunting:
 
 - Displays column names and data types for tables.
 - Essential for discovering what data is available.
+- The cells below cover the core email security tables. Run | getschema on any other Advanced Hunting table the same way.
 
 **Examples**
 
 ```kusto
 EmailEvents | getschema
-```
-
-```kusto
-IdentityLogonEvents | getschema
 ```
 
 ```kusto
@@ -123,14 +120,6 @@ UrlClickEvents | getschema
 
 ```kusto
 EmailPostDeliveryEvents | getschema
-```
-
-```kusto
-AlertInfo | getschema
-```
-
-```kusto
-AlertEvidence | getschema
 ```
 
 ```kusto
@@ -475,100 +464,7 @@ KQL executes each pipe stage **left to right, top to bottom** — the output of 
 
 Get wide data narrow *before* doing expensive operations on it.
 
-
-**Scenario 1: find high-severity MDO alerts from the last 7 days**
-
-```kusto
-// Step 1 — Start with the table
-// Every query starts here. No filters yet — this would return ALL data.
-AlertInfo
-```
-
-```kusto
-// Step 2 — Add the time filter FIRST
-// Timestamp is indexed. This one filter can eliminate millions of rows before anything else runs.
-// Always your first where clause.
-AlertInfo
-| where Timestamp > ago(14d)
-```
-
-```kusto
-// Step 3 — Add a column filter SECOND
-// Now we narrow to just Medium severity rows — but only from the 7-day window we already scoped.
-// The engine never touches older rows at all.
-AlertInfo
-// | where Timestamp > ago(7d)
-| where Severity == "Medium"
-```
-
-```kusto
-// Step 4 — Add a second column filter before any shaping
-// Still filtering, not yet reshaping. More rows eliminated cheaply.
-AlertInfo
-// | where Timestamp > ago(7d)
-| where Severity == "High"
-| where ServiceSource == "AAD Identity Protection"
-```
-
-```kusto
-// Step 5 — Shape the output with project
-// project runs last, on only the rows that survived all filters.
-// If project ran first, it would process every row in the table.
-AlertInfo
-// | where Timestamp > ago(7d)
-| where Severity == "High"
-| where ServiceSource == "AAD Identity Protection"
-| project Timestamp, Title, Category, ServiceSource
-```
-
-```kusto
-// Step 6 — Final query: sort and limit at the very end
-// sort and take are the most expensive per-row operations.
-// Running them on 20 rows is trivial. Running them on millions is not.
-AlertInfo
-// | where Timestamp > ago(21d)
-// | where Severity == "High"
-// | where ServiceSource contains "Sentinel"
-| project Timestamp, Title, Category, ServiceSource
-| sort by Timestamp desc
-| take 20
-```
-
-**What happens if you get the order wrong?**
-
-Filtering late is the most common mistake. KQL efficiency is about rows — the more rows that flow into each stage, the more work every stage has to do.
-
-<pre style="background: transparent; padding: 0; margin: 0; font-family: 'JetBrainsMono Nerd Font', monospace; line-height: 1.25;">
-┌──────────────────────────────────────┬──────────────────────────────┐
-│ Inefficient order:                   │ Efficient order:             │
-├──────────────────────────────────────┼──────────────────────────────┤
-│ AlertInfo                            │ AlertInfo                    │
-│ | project Timestamp, Title, Severity │ | where Timestamp > ago(7d)  │
-│ | where Timestamp > ago(7d)          │ | where Severity == "High"   │
-│ | where Severity == "High"           │ | project Title, Severity    │
-└──────────────────────────────────────┴──────────────────────────────┘
-</pre>
-
-In the inefficient version, the `where` clauses run against every row in the table — nothing has been filtered yet.  
-In the efficient version, the time filter runs first and eliminates the vast majority of rows, so `project` and every other stage only touches what survived.
-
-```kusto
-AlertInfo
-| project Timestamp, Title, Severity
-| where Timestamp > ago (7d)
-| where Severity == "Medium"
-```
-
-```kusto
-AlertInfo
-| where Timestamp > ago (7d)
-| where Severity == "Medium"
-| project Timestamp, Title, Severity
-```
-
----
-
-**Scenario 2: finding inbound emails with attachments from external senders**
+**Finding inbound emails with attachments from external senders**
 
 ```kusto
 // Step 1 — Start with the table
@@ -1106,51 +1002,6 @@ CloudAppEvents
 ```
 
 ```kusto
-// LogonSuccess means success in identity logon events
-IdentityLogonEvents
-| where Timestamp > ago(1d)
-| where ActionType == "LogonSuccess"
-| project Timestamp, AccountUpn, Application, Location
-| take 10
-```
-
-```kusto
-// LogonFailed means failure in identity logon events
-IdentityLogonEvents
-| where Timestamp > ago(1d)
-| where ActionType == "LogonFailed"
-| project Timestamp, AccountUpn, Application, IPAddress, ActionType
-| take 10
-```
-
-```kusto
-// filter to a specific alert severity
-AlertInfo
-| where Timestamp > ago(7d)
-| where Severity == "High"
-| project Timestamp, Title, Severity, Category, ServiceSource
-| take 10
-```
-
-```kusto
-// exclude a severity level
-AlertInfo
-| where Timestamp > ago(7d)
-| where Severity != "Informational"
-| project Timestamp, Title, Severity, Category
-| take 10
-```
-
-```kusto
-// only rows for a specific entity kind
-AlertEvidence
-| where Timestamp > ago(7d)
-| where EntityType == "User"
-| project Timestamp, AlertId, AccountUpn, EvidenceRole
-| take 10
-```
-
-```kusto
 // only URLs embedded in the email body
 EmailUrlInfo
 | where Timestamp > ago(7d)
@@ -1206,19 +1057,6 @@ EmailAttachmentInfo
 **Examples**
 
 ```kusto
-// Using 'in' for multiple values
-IdentityLogonEvents
-| where Timestamp between (datetime(2026-04-29) .. datetime(2026-05-30))
-| where Application in (
-    "Microsoft 365", 
-    "Microsoft SharePoint Online", 
-    "Microsoft OneDrive for Business"
-    )
-| distinct Application
-// | sample 3
-```
-
-```kusto
 // and — chaining conditions in a single where clause
 CloudAppEvents
 | where Timestamp > ago(30d)
@@ -1261,43 +1099,6 @@ EmailEvents
     and EmailDirection != "Outbound"
     and (RecipientEmailAddress endswith "@contoso.com" or RecipientEmailAddress endswith "@contoso.onmicrosoft.com")
 | project Timestamp, InternetMessageId, NetworkMessageId, RecipientEmailAddress, SenderFromAddress, Subject
-```
-
-```kusto
-// Using 'in' for multiple alert severity levels
-AlertInfo
-| where Timestamp > ago(7d)
-| where Severity in ("High", "Medium")
-| project Timestamp, Title, Severity, Category, ServiceSource
-| take 20
-```
-
-```kusto
-// Combining and — sign-in failures from outside the US
-IdentityLogonEvents
-| where Timestamp > ago(7d)
-| where ActionType == "LogonFailed"
-    and Location != "US"
-| project Timestamp, AccountUpn, IPAddress, Location, ActionType
-| take 20
-```
-
-```kusto
-// Using 'in' for multiple alert evidence entity types
-AlertEvidence
-| where Timestamp > ago(7d)
-| where EntityType in ("User", "Ip", "Url")
-| project Timestamp, AlertId, EntityType, AccountUpn, RemoteIP
-| take 20
-```
-
-```kusto
-// NOT in — exclude specific logon action types
-IdentityLogonEvents
-| where Timestamp > ago(7d)
-| where ActionType !in ("LogonSuccess", "LogonAttempted")
-| project Timestamp, AccountUpn, Application, IPAddress, ActionType
-| take 20
 ```
 
 ```kusto
@@ -1896,13 +1697,6 @@ After: Top 3 by Count
 **Examples**
 
 ```kusto
-// Most recent alerts — no summarize needed
-AlertInfo
-| where Timestamp > ago(7d)
-| top 10 by Timestamp desc
-```
-
-```kusto
 EmailEvents
 | where Timestamp > ago(14d)
 | where RecipientEmailAddress =~ "user@contoso.com"
@@ -1944,28 +1738,6 @@ CloudAppEvents
     DistinctUsers = dcount(AccountObjectId)
     by Application
 | top 10 by UploadCount desc
-```
-
-```kusto
-// Top 10 most triggered alert titles this week
-AlertInfo
-| where Timestamp > ago(7d)
-| summarize
-    AlertCount = count()
-    by Title
-| top 10 by AlertCount desc
-```
-
-```kusto
-// Top 10 apps with most identity logon failures
-IdentityLogonEvents
-| where Timestamp > ago(7d)
-| where ActionType == "LogonFailed"
-| summarize
-    FailureCount   = count(),
-    DistinctUsers  = dcount(AccountUpn)
-    by Application
-| top 10 by FailureCount desc
 ```
 
 ```kusto
