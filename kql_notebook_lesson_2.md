@@ -345,23 +345,6 @@ EmailEvents                                                         // Query the
 ```
 
 ```kusto
-EmailEvents                                                 // Query the EmailEvents table
-| where Timestamp > ago(7d)
-| summarize                                                 // Aggregate by sender domain
-    Total = count(),                                        // Total messages from this sender
-    WithAttachments = countif(AttachmentCount > 0)          // Messages that included at least one attachment
-    by SenderFromDomain                                     // One row per sender domain
-| top 20 by Total desc
-```
-
-```kusto
-IdentityLogonEvents                                         // Query identity logon events
-| summarize                                                 // Aggregate authentication results by application
-    FailedLogons = countif(ActionType == "LogonFailed")     // Count failed sign-in attempts
-    by Application                                          // One row per application
-```
-
-```kusto
 // Count high vs medium vs low alerts in a single pass
 AlertInfo
 // | where Timestamp > ago(7d)
@@ -458,15 +441,6 @@ AlertInfo
 | summarize
     UniqueHighAlerts   = dcountif(Title, Severity == "High"),
     UniqueMediumAlerts = dcountif(Title, Severity == "Medium")
-```
-
-```kusto
-// Count distinct URLs by click outcome
-UrlClickEvents
-| where Timestamp > ago(7d)
-| summarize
-    UniqueBlockedUrls = dcountif(Url, ActionType == "ClickBlocked"),
-    UniqueClickedUrls = dcountif(Url, IsClickedThrough == true)
 ```
 
 [back to top](#kql-intermediate-series)
@@ -605,29 +579,10 @@ EmailEvents                                         // Query the EmailEvents tab
 ```
 
 ```kusto
-CloudAppEvents
-| distinct Application, ActionType
-```
-
-```kusto
 CloudAppEvents                              // Query cloud application activity events
 | summarize                                 // Aggregate by application
     ActionTypes = make_set(ActionType)      // Collect unique action types per application
     by Application                          // One row per application
-```
-
-```kusto
-CloudAppEvents
-| where ActionType == "TabAdded"
-| sample 5
-```
-
-```kusto
-EmailEvents                                 // Query the EmailEvents table
-| where RecipientEmailAddress == "user@contoso.com"
-| summarize                                 // Aggregate by sender address
-    SenderIPs = make_set(SenderIPv4)        // Collect unique IPv4 sender IPs per sender
-    by SenderFromAddress                    // One row per sender address
 ```
 
 ```kusto
@@ -698,16 +653,6 @@ EmailEvents                                             // Query the EmailEvents
 | summarize                                             // Aggregate by sender address
     AllRecipients = make_list(RecipientEmailAddress)    // Collect all recipient addresses (duplicates included)
     by SenderFromAddress                                // One row per sender address
-| take 5
-```
-
-```kusto
-EmailEvents                                                 // Query the EmailEvents table
-| where Timestamp > ago(1d)                                 // Limit to events from the last 1 day
-| summarize                                                 // Aggregate recipient data by sender address
-    UniqueRecipients = make_set(RecipientEmailAddress),     // Unique recipient addresses (deduplicated)
-    AllRecipients    = make_list(RecipientEmailAddress)     // All recipient addresses (duplicates preserved)
-    by SenderFromAddress                                    // One row per sender address
 | take 5
 ```
 
@@ -814,65 +759,6 @@ CloudAppEvents                                       // Query cloud application 
     ActionsBag = make_bag(ActionMapping)             // Merge into single JSON object
     by AccountDisplayName, Application               // One row per user per app
 | sample 10
-```
-
-```kusto
-// Aggregate post-delivery actions and results per message
-EmailPostDeliveryEvents                              // Query post-delivery events
-| where Timestamp > ago(7d)                          // Limit to last 7 days
-| where ActionType != "Dynamic Delivery"
-| extend                                             // Create action details mapping
-    ActionMapping = bag_pack(                            // Pack action details
-        "Action", Action,                            // Action taken on the entity
-        "ActionType", ActionType,                    // Type (ZAP, Manual remediation)
-        "ActionTrigger", ActionTrigger,              // What triggered it (Admin, ZAP, etc.)
-        "ActionResult", ActionResult                 // Result (Success, Error)
-    )
-| summarize                                          // Aggregate by message and recipient
-    ActionsBag = make_bag(ActionMapping)             // Merge into single JSON object
-    by NetworkMessageId, RecipientEmailAddress       // One row per message per recipient
-| sample 10
-```
-
-```kusto
-// Property bag of entity types and roles per alert
-AlertEvidence
-| where Timestamp > ago(7d)
-| extend
-    EvidenceDetail = bag_pack(
-        "EntityType",  EntityType,
-        "EvidenceRole", EvidenceRole
-    )
-| summarize
-    EvidenceBag = make_bag(EvidenceDetail)
-    by AlertId
-```
-
-```kusto
-// Bag of sign-in failure details per user
-EntraIdSignInEvents
-| where Timestamp > ago(7d)
-| where ErrorCode != 0
-| extend
-    FailureDetail = bag_pack(
-        Application, ErrorCode
-    )
-| summarize
-    FailureBag = make_bag(FailureDetail)
-    by AccountUpn
-```
-
-```kusto
-// URL click details per user — action → URL mapping
-UrlClickEvents
-| where Timestamp > ago(7d)
-| extend
-    ClickDetail = bag_pack(
-        ActionType, Url
-    )
-| summarize
-    ClickBag = make_bag(ClickDetail)
-    by AccountUpn
 ```
 
 > `bag_pack()` builds a named JSON object from field values. `make_bag()` aggregates those objects across multiple rows into one combined JSON object. They are typically used together: `bag_pack()` per row, then `make_bag()` in a `summarize`.
@@ -1095,15 +981,6 @@ EmailPostDeliveryEvents
     by NetworkMessageId
 ```
 
-```kusto
-// Most recent URL click per user (last action taken)
-UrlClickEvents
-| where Timestamp > ago(7d)
-| summarize
-    arg_max(Timestamp, Url, ActionType, IsClickedThrough)
-    by AccountUpn
-```
-
 ### arg_min()
 
 - Returns the row with the minimum value — use for the earliest or first record per group.
@@ -1155,30 +1032,12 @@ EmailAttachmentInfo                         // Query email attachment metadata
 ```
 
 ```kusto
-// Earliest alert ever fired per category
-AlertInfo
-| where Timestamp > ago(90d)
-| summarize
-    arg_min(Timestamp, Title, Severity)
-    by Category
-```
-
-```kusto
 // First Entra sign-in failure per user
 EntraIdSignInEvents
 | where Timestamp > ago(30d)
 | where ErrorCode != 0
 | summarize
     arg_min(Timestamp, Application, IPAddress, ErrorCode)
-    by AccountUpn
-```
-
-```kusto
-// First URL a user ever clicked (earliest click on record)
-UrlClickEvents
-| where Timestamp > ago(30d)
-| summarize
-    arg_min(Timestamp, Url, ActionType)
     by AccountUpn
 ```
 
@@ -2967,19 +2826,6 @@ Two operators for conditional logic — `iif()` returns one of two values based 
 **Examples**
 
 ```kusto
-IdentityLogonEvents                         // Query identity logon events
-| where Timestamp > ago(7d)                 // Limit to last 7 days
-| extend                                    // Add a derived risk classification column
-    Risk = iif(                             // Conditional logic (if / else)
-        ActionType == "LogonFailed",        // If the logon attempt failed
-        "HighRisk",                         // Assign high risk
-        "Normal"                            // Otherwise assign normal risk
-    )
-| project-reorder Risk                      // Move the Risk column to the front for visibility
-
-```
-
-```kusto
 EmailAttachmentInfo                   // Query email attachment metadata
 | where Timestamp > ago(7d)           // Limit to last 7 days
 | extend                              // Add a derived size classification column
@@ -3104,25 +2950,6 @@ EmailEvents                                          // Query the EmailEvents ta
 | summarize                                          // Count by outcome
     EmailCount = count()
     by DeliveryOutcome
-```
-
-```kusto
-// Risk score sender domains by email volume
-EmailEvents                                          // Query the EmailEvents table
-| where Timestamp > ago(7d)                          // Limit to last 7 days
-| summarize                                          // Count emails per domain
-    EmailCount = count()
-    by SenderFromDomain
-| extend                                             // Add volume-based risk tier
-    VolumeTier = case(                               // Classify by email count
-        EmailCount > 10000000, "Very High Volume",
-        EmailCount > 5000000, "High Volume",
-        EmailCount > 1000000, "Medium Volume",
-        EmailCount > 100000, "Low Volume",
-        "Minimal"                                    // Default
-    )
-| sort by EmailCount desc
-| take 20                                            // Top 20 domains
 ```
 
 ```kusto
