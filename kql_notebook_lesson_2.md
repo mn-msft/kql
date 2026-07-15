@@ -2065,21 +2065,6 @@ Users                    Orders                     leftanti join Result
 └────────┴─────────┘     └────────┴─────────┘ 
 </pre>
 
-```kusto
-// leftanti join — find threats that arrived but were never remediated
-// Keep all rows from EmailEvents that have NO matching row in EmailPostDeliveryEvents
-// The composite key (NetworkMessageId + RecipientEmailAddress) ensures per-recipient accuracy:
-// the same message can be remediated for one recipient but not another
-EmailEvents
-| where Timestamp > ago(7d)
-| where ThreatTypes in ("Phish", "Malware")
-    and EmailAction !in ("Replace attachment", "Send to quarantine")
-| join kind=leftanti EmailPostDeliveryEvents
-    on NetworkMessageId, RecipientEmailAddress
-| project Timestamp, SenderFromAddress, RecipientEmailAddress,
-    Subject, ThreatTypes, DeliveryLocation
-```
-
 ---
 
 ### Duplicate join keys in security telemetry
