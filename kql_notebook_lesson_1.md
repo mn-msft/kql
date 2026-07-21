@@ -2904,6 +2904,32 @@ Advanced Hunting retains data for **30 days** by default. If your organization s
 
 Querying beyond your retention window does not produce an error. Advanced Hunting silently returns only the data that exists within the configured window. If you request `ago(180d)` but retention is 90 days, you get 90 days of results with no warning that the range was truncated. If results look unexpectedly sparse, check your time window against your retention configuration.
 
+### Timezone normalization
+
+All Advanced Hunting timestamps are UTC. Use `datetime_utc_to_local()` with `format_datetime()` to convert to a readable local time.
+
+```kusto
+// 24-hour format
+EmailEvents
+| extend TimestampEST = format_datetime(
+    datetime_utc_to_local(Timestamp, "US/Eastern"),
+    "yyyy-MM-dd HH:mm:ss"
+)
+| project Timestamp, TimestampEST, NetworkMessageId, SenderFromAddress, RecipientEmailAddress
+| take 5
+```
+
+```kusto
+// 12-hour format with AM/PM
+EmailEvents
+| extend TimestampEST = format_datetime(
+    datetime_utc_to_local(Timestamp, "US/Eastern"),
+    "yyyy-MM-dd hh:mm:ss tt"
+)
+| project Timestamp, TimestampEST, NetworkMessageId, SenderFromAddress, RecipientEmailAddress
+| take 5
+```
+
 [back to top](#kql-for-email-security-beginner-series)
 
 ---
