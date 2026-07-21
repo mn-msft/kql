@@ -45,7 +45,7 @@ Learn to hunt threats with foundational query concepts such as filtering, projec
 17. [contains / has / startswith / endswith](#contains-has-startswith-endswith)
 18. [negation ( ! )](#negation)
 19. [count](#count)
-20. [>, <, >=, <= (numeric comparisons)](#comparison-operators)
+20. [>, <, >=, <= (comparison operators)](#comparison-operators)
 21. [Working with time](#working-with-time)
 22. [extend](#extend)
 23. [Live scenario: EmailAttachmentInfo](#live-scenario-emailattachmentinfo)
@@ -94,7 +94,6 @@ Understanding how tables relate is critical for effective hunting:
 
 - Displays column names and data types for tables.
 - Essential for discovering what data is available.
-- The cells below cover the core email security tables. Run | getschema on any other Advanced Hunting table the same way.
 
 **Examples**
 
@@ -184,14 +183,6 @@ print
 print
     AlertSummary  = strcat("[ALERT] ", "Suspicious sign-in", " — Severity: High"),
     BehaviorLabel = strcat("User: ", "bob@contoso.com", " | Action: ", "LateralMovement")
-```
-
-```kusto
-// Test dynamic arrays — used in AttackTechniques and ThreatTypes
-print
-    Techniques   = dynamic(["T1078", "T1059", "T1003"]),
-    FirstTech    = tostring(dynamic(["T1078", "T1059"])[0]),
-    TechCount    = array_length(dynamic(["T1078", "T1059", "T1003"]))
 ```
 
 [back to top](#kql-for-email-security-beginner-series)
@@ -666,7 +657,7 @@ EmailEvents // 53 columns
 
 ```kusto
 // Scoped to specific tables — cheaper than naked search
-search in (EmailEvents, CloudAppEvents) "mike.taylor@banwinner.com"
+search in (EmailEvents, CloudAppEvents) "mike.taylor@contoso.com"
 | where Timestamp > ago(7d)
 // | take 10
 ```
@@ -685,6 +676,22 @@ EmailEvents
 | where Timestamp > ago(7d)
 | where * has "invoice"
 | take 10
+```
+
+```kusto
+// Field-specific cross-table search — faster than keyword search; only checks named columns
+// `search in (...) field == value` scans only that column, skipping the rest
+// ```table``` is a special column that shows which table each row came from
+search in (EmailEvents, IdentityLogonEvents, CloudAppEvents, UrlClickEvents, AlertEvidence)
+    Timestamp > ago(1d)
+    and (
+        SenderFromAddress        == "alice@contoso.com"
+        or RecipientEmailAddress == "alice@contoso.com"
+        or AccountUpn            == "alice@contoso.com"
+    )
+| project Timestamp, $table, SenderFromAddress, RecipientEmailAddress, AccountUpn
+| sort by Timestamp desc
+| take 50
 ```
 
 [back to top](#kql-for-email-security-beginner-series)
@@ -952,7 +959,7 @@ EmailEvents
 **Examples**
 
 ```kusto
-// exact match — only rows where EmailDirection is exactly "Inbound"
+// exact match — only rows where EmailDirection is exactly "Intra-org"
 EmailEvents
 | where Timestamp > ago (7d)
 | where EmailDirection == "Intra-org"
@@ -1208,10 +1215,10 @@ AlertInfo
 ```
 
 ```kusto
-// in~ — case-insensitive severity filter
+// in~ — case-insensitive: any casing of the values matches, so one form is enough
 AlertInfo
 | where Timestamp > ago(7d)
-| where Severity in~ ("HIGH", "high", "High")
+| where Severity in~ ("high", "medium", "informational")
 | project Timestamp, Title, Severity, Category
 | take 10
 ```
@@ -1220,7 +1227,7 @@ AlertInfo
 // in~ — match identity logon app names regardless of casing
 IdentityLogonEvents
 | where Timestamp > ago(1d)
-| where Application in~ ("MICROSOFT TEAMS", "microsoft teams", "Microsoft Teams")
+| where Application in~ ("microsoft teams", "microsoft outlook", "microsoft sharepoint online")
 | project Timestamp, AccountUpn, Application, IPAddress, Location
 | take 10
 ```
@@ -1273,7 +1280,8 @@ Three operators for shaping the column set of your output — `project` selects,
 ### project
 
 - Selects which columns to include in output.
-- Also used to rename columns with `project` or `project-rename`
+- Rename a column inline: `NewName = OldName` — any column not listed is dropped
+- To rename without dropping other columns, use `project-rename` instead
 
 **How `project` works**
 
@@ -2067,23 +2075,6 @@ print Subject = "invoice_2024"
 // Expected: MatchesHasAny = true, MatchesIn = false
 ```
 
-### URL paths and tokenization
-
-`has` splits strings on non-alphanumeric characters including `/`. A URL path like `/saml2/index.html` tokenises into `saml2` and `index` and `html` — the slashes disappear. `has "/saml2/"` will **never match** because `/saml2/` is not a token.
-
-Use `has_any` or `contains` for URL path matching:
-
-```kusto
-// has fails on URL path segments — '/' is a token separator
-// has "/saml2/" would return 0 rows even when the URL contains it
-
-// Use has_any for multiple URL path patterns (still indexed, faster than contains)
-let SuspiciousPaths = dynamic(['/saml2/index.html', '/Udlaps/', '/adls/index.html']);
-EmailUrlInfo
-| where Timestamp > ago(7d)
-| where Url has_any (SuspiciousPaths)
-```
-
 ### Wildcard column matching: `* has` and `* contains`
 
 The `*` wildcard applies an operator across **every string column** in the current row — useful when you don't know which column holds the value.
@@ -2301,9 +2292,9 @@ IdentityLogonEvents
 ---
 
 <a id="comparison-operators" name="comparison-operators"></a>
-## >, <, >=, <= (numeric comparisons)
+## >, <, >=, <= (comparison operators)
 
-- For comparing **numeric** values: file sizes, counts, error codes, timestamps.
+- For comparing **ordered values** — numbers (file sizes, counts, error codes) and timestamps.
 - Different from `==` / `!=` which test for exact equality — see the [equality operators](#equality-operators) section.
 
 **Examples**
@@ -2907,28 +2898,11 @@ AlertInfo
 | take 5
 ```
 
-### `ThreatTypes` is multi-valued
-
-`ThreatTypes` can hold multiple values in one string: `"Phish, Spam"`. Exact match with `==` silently returns zero rows. `has` matches the individual token correctly.
-
-```kusto
-// GOTCHA: == "Phish" fails when ThreatTypes is "Phish, Spam"
-// The field stores multiple threat labels, not a single value
-EmailEvents
-| where Timestamp > ago(7d)
-| where ThreatTypes == "Phish"  // returns 0 rows when value is "Phish, Spam"
-```
-
-```kusto
-// FIX: has matches the token inside the combined string
-EmailEvents
-| where Timestamp > ago(7d)
-| where ThreatTypes has "Phish"  // matches "Phish", "Phish, Spam", "Phish, Malware"
-```
-
 ### Data retention
 
-Advanced Hunting retains data for **30 days** by default. Extended retention up to 180 days is available with Microsoft Defender XDR add-on licensing. Queries beyond your retention window return no results — not an error, just an empty result set. If you see an unexpectedly empty result, check your time window first.
+Advanced Hunting retains data for **30 days** by default. If your organization streams Defender data to an external system — Microsoft Sentinel, Azure Data Explorer, a data lake, Microsoft Fabric, or a third-party SIEM like Splunk — queries can reach further back depending on how that system is configured.
+
+Querying beyond your retention window does not produce an error. Advanced Hunting silently returns only the data that exists within the configured window. If you request `ago(180d)` but retention is 90 days, you get 90 days of results with no warning that the range was truncated. If results look unexpectedly sparse, check your time window against your retention configuration.
 
 [back to top](#kql-for-email-security-beginner-series)
 
