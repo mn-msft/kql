@@ -2663,6 +2663,8 @@ union isfuzzy=true withsource=TableName Email*
 | sort by Count desc
 ```
 
+**Scenario:** You have an `InternetMessageId` from a mail header, a support ticket, or a user complaint — and nothing else. Use `union` across all email tables to pull every row Microsoft has about that message.
+
 ```kusto
 // Starting point: an InternetMessageId from a mail header, ticket, or email client
 // Bridge to NetworkMessageId (Microsoft's internal ID), then pull all related rows across every email table
@@ -2910,6 +2912,30 @@ EmailAttachmentInfo
 | take 20
 ```
 
+```kusto
+// Distribution list activity — email count and last seen per DL over the past 7 days
+// coalesce() fills EmailCount with 0 for DLs that received no mail in the window
+let DLs = datatable(DistributionList:string)
+[
+    "_sg_training_development@contoso.com",
+    "_sg_sales@contoso.com",
+    "_sg_procurement@contoso.com",
+    "fake_sg@contoso.com"
+];
+let EmailSummary =
+    EmailEvents
+    | where Timestamp > ago(7d)
+    | where DistributionList in (DLs)
+    | where InternetMessageId !contains "journal.report.generator"
+    | summarize
+        EmailCount = dcount(NetworkMessageId),
+        MostRecentEmail = max(Timestamp)
+        by DistributionList;
+DLs
+| lookup kind=leftouter EmailSummary on DistributionList
+| extend EmailCount = coalesce(EmailCount, 0)
+```
+
 [back to top](#kql-intermediate-series)
 
 ---
@@ -3035,6 +3061,22 @@ EmailEvents                                          // Query the EmailEvents ta
     Count = count()
     by AttachmentRisk
 | sort by Count desc                                 // Sort by volume
+```
+
+```kusto
+// Classify sender domains by email volume over the past week
+EmailEvents
+| where Timestamp > ago(7d)
+| summarize EmailCount = count() by SenderFromDomain
+| extend
+    VolumeCategory = case(
+        EmailCount > 50000, "Very high",
+        EmailCount > 25000, "High",
+        EmailCount > 10000, "Medium",
+        EmailCount > 1000,  "Low",
+        "Minimal"
+    )
+| sort by EmailCount desc
 ```
 
 ```kusto
