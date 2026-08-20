@@ -1011,24 +1011,23 @@ EntraIdSignInEvents
 ```
 
 ```kusto
-// AiTM detection: stolen session cookie reused from a different country
-// A stolen session cookie shares the original SessionId but the attacker signs in from a new country
-// arg_min(Timestamp, Country) captures the first (legitimate) country for each session
-let _OfficeHomeSessions =
+// First and most recent sign-in country per user — find accounts that appear in more than one country
+// arg_min() picks the earliest row; arg_max() picks the latest — join them to compare the two
+let _FirstCountry =
     EntraIdSignInEvents
-    | where Timestamp > ago(7d) and ErrorCode == 0
-        and ApplicationId == "4765445b-32c6-49b0-83e6-1d93765276ca"  // Office Home app
-        and ClientAppUsed == "Browser"
-    | summarize arg_min(Timestamp, Country) by SessionId;
+    | where Timestamp > ago(30d)
+    | where ErrorCode == 0
+    | summarize arg_min(Timestamp, Country) by AccountUpn
+    | project AccountUpn, FirstCountry = Country;
 EntraIdSignInEvents
-| where Timestamp > ago(7d)
-    and ApplicationId != "4765445b-32c6-49b0-83e6-1d93765276ca"
-    and ClientAppUsed == "Browser"
-| project OtherTimestamp = Timestamp, AccountObjectId,
-    AccountDisplayName, OtherCountry = Country, SessionId
-| join kind=inner _OfficeHomeSessions on SessionId
-| where OtherTimestamp > Timestamp   // later sign-in on same session
-    and OtherCountry != Country        // from a different country
+| where Timestamp > ago(30d)
+| where ErrorCode == 0
+| summarize arg_max(Timestamp, Country) by AccountUpn
+| project AccountUpn, LatestCountry = Country
+| join kind=inner _FirstCountry on AccountUpn
+| where FirstCountry != LatestCountry
+| project AccountUpn, FirstCountry, LatestCountry
+| sort by AccountUpn asc
 ```
 
 [back to top](#kql-intermediate-series)
@@ -1488,33 +1487,6 @@ UrlClickEvents
 | sort by Timestamp desc
 ```
 
-**toscalar(make_set()) — first-seen pattern**
-
-`toscalar()` collapses a subquery result to a single scalar value. Combined with `make_set()`, it builds an array from an entire subquery that you can use directly in an `!in` filter — no join needed.
-
-Use this to find events that **did not appear** in a historical baseline window: first-seen applications, first-seen countries, first-seen sending domains.
-
-> For very large baseline sets (> 100k distinct values), prefer a `leftanti` join instead — `make_set()` keeps everything in memory.
-
-```kusto
-// First-seen application — accounts signing into apps not seen in the prior three-week baseline
-// toscalar(make_set()) builds an array from the baseline window and returns it as one scalar value
-// !in filters the hunting window against that scalar directly — no additional join step
-let _baselineApps = toscalar(
-    EntraIdSignInEvents
-    | where Timestamp between (ago(28d) .. ago(7d))  // three-week baseline
-    | where ErrorCode == 0                            // successful sign-ins only
-    | summarize make_set(Application)                 // distinct apps seen in baseline
-);
-EntraIdSignInEvents
-| where Timestamp > ago(7d)              // hunting window: last 7 days
-| where ErrorCode == 0
-| where Application !in (_baselineApps)  // not seen during baseline period
-| summarize FirstSeen = min(Timestamp), SignInCount = count()
-    by AccountUpn, Application, Location
-| sort by FirstSeen desc
-```
-
 [back to top](#kql-intermediate-series)
 
 ---
@@ -1725,37 +1697,6 @@ EmailEvents
 ) on $left.RecipientNorm == $right.AccountNorm
 | project Timestamp, SenderFromAddress, RecipientEmailAddress, Url
 | take 20
-```
-
-**Negative array index — extracting the last element**
-
-`split(Value, ".")[-1]` counts from the end of the split array. Use it when the number of segments varies and you always want the last one — file extensions, top-level domains, URL path components.
-
-**Two-subquery ratio**
-
-Build two `let` subqueries — total count and subset count — then join and divide. Use `todouble()` before dividing: integer division in KQL truncates (`3 / 4 = 0`, not `0.75`).
-
-```kusto
-// Which attachment file extensions carry the highest malware rate?
-// split(FileName, ".")[-1] extracts the extension regardless of dot count in the filename
-// Two subqueries compute total vs malware attachment count per extension, then divide
-let _Total = EmailAttachmentInfo
-    | where Timestamp > ago(30d)
-    | extend Ext = tolower(tostring(split(FileName, ".")[-1]))
-    | where isnotempty(Ext)
-    | summarize TotalCount = count() by Ext;
-let _Malware = EmailAttachmentInfo
-    | where Timestamp > ago(30d)
-    | where isnotempty(ThreatTypes)
-    | extend Ext = tolower(tostring(split(FileName, ".")[-1]))
-    | summarize MalwareCount = count() by Ext;
-_Total
-| join kind=inner (_Malware) on Ext
-| project Ext,
-          MalwareRate = round(todouble(MalwareCount) / todouble(TotalCount) * 100, 1),
-          MalwareCount, TotalCount
-| where TotalCount > 5      // exclude extensions with too few samples
-| sort by MalwareRate desc
 ```
 
 [back to top](#kql-intermediate-series)
@@ -2478,6 +2419,28 @@ _MaliciousEmails
 | sort by LogonTime desc
 ```
 
+### Explicit column mapping — when join keys have different names
+
+`join on Column` assumes the matching field has the same name on both sides. When it doesn't — common with external threat feeds that use generic column names — use `$left.Column == $right.Column` to map them explicitly.
+
+```kusto
+// Domain blocklist join — sender domain vs DomainName column in the external feed
+// Column names differ on each side: SenderDomain (left) vs DomainName (right)
+// $left.$right explicit mapping handles the mismatch without renaming columns first
+let _BlockedDomains = externaldata(DomainName: string, Category: string)
+    [@"https://storageaccount.blob.core.windows.net/feeds/blocked-domains.csv"]
+    with (format="csv", ignoreFirstRecord=true)
+| project DomainName = tolower(DomainName), Category;
+EmailEvents
+| where Timestamp > ago(7d)
+| where EmailDirection == "Inbound"
+| extend SenderDomain = tolower(SenderFromDomain)
+| join kind=inner (_BlockedDomains)
+    on $left.SenderDomain == $right.DomainName    // explicit mapping: column names differ
+| project Timestamp, SenderFromAddress, RecipientEmailAddress, Subject, Category, DeliveryAction
+| sort by Timestamp desc
+```
+
 [back to top](#kql-intermediate-series)
 
 ---
@@ -2725,8 +2688,8 @@ _MaliciousHashes
 ```kusto
 let _imid =
     externaldata (Message_ID: string) [
-        @"https://bwdemoblob.blob.core.windows.net/curated/EmailEvents_20260120_160736.csv"
-        h@"?sp=r&st=2026-06-03T14:02:51Z&se=2026-06-03T22:17:51Z&spr=https&sv=2026-02-06&sr=b&sig=6uXz6dpzgbdnU3pT6DMQ3fWSCivggGEzD6cw7rxuMZs%3D"
+        @"https://storageaccount.blob.core.windows.net/container/EmailEvents_sample.csv"
+        h@"?sp=<sas-token>"
     ]
     with (format='csv', ignorefirstrecord=true)
     | project Message_ID;
@@ -2736,8 +2699,8 @@ _imid;
 ```kusto
 let _imid =
     externaldata (Message_ID:string) [
-        @"https://bwdemoblob.blob.core.windows.net/curated/EmailEvents_20260120_160736.csv"
-        h@"?sp=r&st=2026-06-03T14:02:51Z&se=2026-06-03T22:17:51Z&spr=https&sv=2026-02-06&sr=b&sig=6uXz6dpzgbdnU3pT6DMQ3fWSCivggGEzD6cw7rxuMZs%3D"
+        @"https://storageaccount.blob.core.windows.net/container/EmailEvents_sample.csv"
+        h@"?sp=<sas-token>"
     ]
     with (format='csv', ignorefirstrecord=true)
     | project Message_ID;
@@ -2791,28 +2754,6 @@ union _AttachmentHits, _UrlHits
 | sort by Timestamp desc
 ```
 
-**Explicit column mapping — when join keys have different names**
-
-`join on Column` assumes the matching field has the same name on both sides. When it doesn't — common with external threat feeds that use generic column names — use `$left.Column == $right.Column` to map them explicitly.
-
-```kusto
-// Domain blocklist join — sender domain vs DomainName column in the external feed
-// Column names differ on each side: SenderDomain (left) vs DomainName (right)
-// $left.$right explicit mapping handles the mismatch without renaming columns first
-let _BlockedDomains = externaldata(DomainName: string, Category: string)
-    [@"https://storageaccount.blob.core.windows.net/feeds/blocked-domains.csv"]
-    with (format="csv", ignoreFirstRecord=true)
-| project DomainName = tolower(DomainName), Category;
-EmailEvents
-| where Timestamp > ago(7d)
-| where EmailDirection == "Inbound"
-| extend SenderDomain = tolower(SenderFromDomain)
-| join kind=inner (_BlockedDomains)
-    on $left.SenderDomain == $right.DomainName    // explicit mapping: column names differ
-| project Timestamp, SenderFromAddress, RecipientEmailAddress, Subject, Category, DeliveryAction
-| sort by Timestamp desc
-```
-
 [back to top](#kql-intermediate-series)
 
 ---
@@ -2838,22 +2779,6 @@ lookup → for adding columns from a small reference table:
 
 **Examples**
 
-
-```kusto
-// Match email URLs against a domain reference table
-let _ThreatIntel = datatable(Domain:string, ThreatCategory:string, Confidence:string)
-[
-    "evil-phishing.com",   "Phishing",              "High",
-    "malware-host.net",    "Malware",               "High",
-    "suspicious-cdn.io",   "C2",                    "Medium",
-    "fake-login.org",      "Credential Harvesting", "High"
-];
-EmailUrlInfo
-| where Timestamp > ago(7d)
-| lookup kind=leftouter _ThreatIntel on $left.UrlDomain == $right.Domain
-| project Timestamp, NetworkMessageId, UrlDomain, ThreatCategory, Confidence
-| take 20
-```
 
 ```kusto
 // Add human-readable error descriptions to Entra sign-in failures
