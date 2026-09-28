@@ -1325,32 +1325,6 @@ UrlClickEvents
 | sort by SpanHours desc
 ```
 
-**Two-pass baseline exclusion**
-
-A common let pattern: build a known set from a historical window, then exclude it from the current window. Useful for detecting first-time or anomalous behavior.
-
-```kusto
-// Two-pass baseline exclusion — detect senders with a new bulk spike
-// Pass 1: build the set of known high-volume senders over the last 30 days (excluding today)
-let _knownBulkSenders =
-    EmailEvents
-    | where Timestamp between (ago(30d) .. ago(1d))
-    | where EmailDirection == "Inbound" and DeliveryAction == "Delivered"
-    | summarize RecipientCount = dcount(RecipientEmailAddress)
-        by SenderFromAddress, bin(Timestamp, 10m)
-    | where RecipientCount > 500
-    | distinct SenderFromAddress;
-// Pass 2: find today's bulk senders not seen before
-EmailEvents
-| where Timestamp > ago(1d)
-| where EmailDirection == "Inbound"
-| where SenderFromAddress !in (_knownBulkSenders)
-| summarize RecipientCount = dcount(RecipientEmailAddress)
-    by SenderFromAddress, bin(Timestamp, 10m)
-| where RecipientCount > 500
-| sort by RecipientCount desc
-```
-
 [back to top](#kql-intermediate-series)
 
 ---
@@ -2389,35 +2363,6 @@ _Attachments                                                         // Start fr
 | **Row count guarantee** | No — duplicates can reduce distinct results | Can exceed 20 | Yes — up to 20 |
 
 Use Version 2 when you want to rank by message, not by individual file. Version 3 gives a clean, predictable result — 20 rows, no duplicates.
-
-### Datetime proximity join
-
-Filter post-join rows to only those where two timestamp columns fall within a defined window.
-Useful for correlating events across tables that share a user identifier but not a unique key.
-
-**Examples**
-
-```kusto
-// Datetime proximity — find logons within 30 minutes of a malicious email being received
-// (LogonTime - TimeEmail) computes the gap between two datetime columns
-// between (0min .. 30min) keeps only rows where the logon occurred in the suspicious window
-let _MaliciousEmails =
-    EmailEvents
-    | where Timestamp > ago(7d)
-    | where ThreatTypes has "Malware"
-    | project TimeEmail = Timestamp, Subject, SenderFromAddress,
-              AccountName = tostring(split(RecipientEmailAddress, "@")[0]);
-_MaliciousEmails
-| join kind=inner (
-    IdentityLogonEvents
-    | where Timestamp > ago(7d)
-    | project LogonTime = Timestamp, AccountName, DeviceName, IPAddress
-) on AccountName
-| where (LogonTime - TimeEmail) between (0min .. 30min)
-| project Subject, SenderFromAddress, AccountName, DeviceName, IPAddress,
-          TimeEmail, LogonTime
-| sort by LogonTime desc
-```
 
 ### Explicit column mapping — when join keys have different names
 
