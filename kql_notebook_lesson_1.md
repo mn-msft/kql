@@ -1861,6 +1861,9 @@ Value:  "www.facebook.com/login/page.html"
 
 ```kusto
 // has vs contains
+// "www.facebook" contains a separator ('.'), so has tokenizes it into "www" and "facebook"
+// and matches if BOTH tokens appear anywhere in Url — not the literal adjacent phrase
+// e.g. this would also match "http://cdn.example.com/www-share?ref=facebook"
 EmailUrlInfo
 // | where Url contains "www.facebook"
 | where Url has "www.facebook"
@@ -2340,19 +2343,6 @@ AlertInfo
 ```
 
 ```kusto
-// URLs from large emails — message size > 5MB
-// Join EmailUrlInfo with EmailEvents on NetworkMessageId
-EmailUrlInfo
-| where Timestamp > ago(7d)
-| join kind=inner (
-    EmailEvents
-    | where EmailSize > 5242880
-) on NetworkMessageId
-| project Timestamp, SenderFromAddress, Url, EmailSize
-| take 10
-```
-
-```kusto
 // UrlClickEvents — users who clicked through a Safe Links warning
 // IsClickedThrough == true means user bypassed the warning
 UrlClickEvents
@@ -2459,6 +2449,7 @@ CloudAppEvents
 
 - Filter specific time ranges.
 - Syntax: `between (starttime .. endtime)` — both the start and end times are included.
+- `between` is shorthand for two comparisons joined with `and`: `Timestamp >= start and Timestamp <= end` does the same thing. Writing it out with comparison operators is the only option when the two sides need different operators — for example a half-open window (`>=` start, `<` end) so a boundary instant isn't double-counted when you chain consecutive windows.
 
 **Examples**
 
@@ -2473,6 +2464,25 @@ EmailEvents
 // Between 3 days ago and 1 day ago
 CloudAppEvents
 | where Timestamp between (ago(3d) .. ago(1d))
+| take 10
+```
+
+```kusto
+// Same range, written with comparison operators instead of between()
+// between (start .. end) is shorthand for exactly this — both boundaries included either way
+EmailEvents
+| where Timestamp >= datetime(2026-01-01)
+    and Timestamp <= datetime(2026-01-07)
+| take 10
+```
+
+```kusto
+// Comparison operators can do something between() can't: a half-open window
+// >= start and < end excludes the end instant — useful so consecutive windows
+// (e.g. day 1, then day 2) never double-count the shared boundary
+EmailEvents
+| where Timestamp >= datetime(2026-01-01)
+    and Timestamp < datetime(2026-01-08)
 | take 10
 ```
 
