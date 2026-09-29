@@ -289,7 +289,6 @@ EmailEvents
 ```kusto
 EmailEvents // 778k results
 // | where Timestamp > ago (7d)
-// | where EmailDirection == "Inbound"
 // | where SenderFromDomain has "gmail.com"
 // | take 10
 ```
@@ -297,7 +296,6 @@ EmailEvents // 778k results
 ```kusto
 EmailEvents
 | where Timestamp > ago (5d)
-// | where EmailDirection == "Inbound"
 // | where SenderFromDomain has "gmail.com"
 // | take 10
 ```
@@ -305,23 +303,13 @@ EmailEvents
 ```kusto
 EmailEvents // starts with 778k
 | where Timestamp > ago (5d) // prunes it to 12k
-| where EmailDirection == "Inbound" // prunes it 7k
-// | where SenderFromDomain has "gmail.com"
-// | take 10
-```
-
-```kusto
-EmailEvents
-| where Timestamp > ago (5d)
-| where EmailDirection == "Inbound"
-| where SenderFromDomain has "gmail.com"
+| where SenderFromDomain has "gmail.com" // prunes it to ~180 — a single external domain is far more selective than EmailDirection would be
 // | take 10
 ```
 
 ```kusto
 EmailEvents
 | where Timestamp > ago (7d)
-| where EmailDirection == "Inbound"
 | where SenderFromDomain has "gmail.com"
 | take 10
 ```
@@ -625,6 +613,20 @@ AlertInfo
 | project Timestamp, SevTag, Category, ServiceSource
 ```
 
+```kusto
+// SenderFromDomain has thousands of possible values, but a single INTERNAL domain
+// like "contoso.com" matches every direction an internal sender can produce —
+// both Outbound and Intra-org — so filtering on it alone doesn't separate them
+// (e.g. 500k intra-org + 100k outbound both match "contoso.com" = 600k rows).
+// EmailDirection only has 3 possible values, but here IT'S the narrower filter:
+// "Outbound" alone is 100k rows, not 600k — so it goes first.
+EmailEvents
+| where Timestamp > ago(7d)
+| where EmailDirection == "Outbound"
+| where SenderFromDomain == "contoso.com"
+| take 10
+```
+
 [back to top](#kql-for-email-security-beginner-series)
 
 ---
@@ -794,7 +796,6 @@ After: Only external emails
 ```kusto
 EmailEvents
 | where Timestamp >= ago(1d)
-| where EmailDirection == "Inbound"
 | where SenderFromDomain == "yahoo.com"
 | take 10
 ```
