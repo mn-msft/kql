@@ -1325,6 +1325,60 @@ UrlClickEvents
 | sort by SpanHours desc
 ```
 
+```kusto
+let Redeliveries =
+    EmailPostDeliveryEvents
+    | where Timestamp >= ago(7d)
+    | where ActionType == "Redelivery"
+    | project
+        NetworkMessageId,
+        RecipientEmailAddress,
+        RedeliveryTime = Timestamp,
+        RedeliveryAction = Action,
+        ActionTrigger,
+        ActionResult,
+        RedeliveryLocation = DeliveryLocation;
+let Deliveries =
+    EmailEvents
+    | where Timestamp >= ago(7d)
+    | project
+        NetworkMessageId,
+        RecipientEmailAddress,
+        OriginalDeliveryTime = Timestamp,
+        Subject,
+        SenderFromAddress,
+        OriginalDeliveryAction = DeliveryAction,
+        OriginalDeliveryLocation = DeliveryLocation;
+Redeliveries
+| join kind=inner Deliveries
+    on NetworkMessageId, RecipientEmailAddress
+| where OriginalDeliveryTime <= RedeliveryTime
+| extend TimeToRedeliveryMinutes =
+    datetime_diff("minute", RedeliveryTime, OriginalDeliveryTime)
+| summarize arg_max(OriginalDeliveryTime, *)
+    by NetworkMessageId, RecipientEmailAddress, RedeliveryTime
+| extend
+    TimeToRedeliveryHours = round(TimeToRedeliveryMinutes / 60.0, 2),
+    TimeToRedeliveryDays = round(TimeToRedeliveryMinutes / 1440.0, 2)
+| project
+    OriginalDeliveryTime,
+    RedeliveryTime,
+    TimeToRedeliveryMinutes,
+    TimeToRedeliveryHours,
+    TimeToRedeliveryDays,
+    RecipientEmailAddress,
+    SenderFromAddress,
+    Subject,
+    NetworkMessageId,
+    OriginalDeliveryAction,
+    OriginalDeliveryLocation,
+    RedeliveryAction,
+    ActionTrigger,
+    ActionResult,
+    RedeliveryLocation
+| sort by RedeliveryTime desc
+```
+
 [back to top](#kql-intermediate-series)
 
 ---
